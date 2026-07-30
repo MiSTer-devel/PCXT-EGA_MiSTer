@@ -4,14 +4,8 @@
 //
 // Based on KFPC-XT written by @kitune-san
 //
-`ifndef SYSTEM_VARIANT_TANDY
-`define SYSTEM_VARIANT_TANDY 0
-`endif
-`ifndef ROM_VARIANT_TANDY
-`define ROM_VARIANT_TANDY `SYSTEM_VARIANT_TANDY
-`endif
-`ifndef ROM_IS_TANDY
-`define ROM_IS_TANDY `ROM_VARIANT_TANDY
+`ifndef ENABLE_EMS
+`define ENABLE_EMS 0
 `endif
 
 module RAM (
@@ -48,10 +42,7 @@ module RAM (
      input   logic           ems_b3,
      input   logic           ems_b4,
      // BIOS
-     input  logic    [1:0]  bios_protect_flag,
-     input  logic           tandy_bios_flag,
-    // Optional flags
-    input  logic           enable_a000h,
+     input  logic    [2:0]  bios_protect_flag,
     // Wait mode
     input   logic           wait_count_clk_en,
     input   logic   [1:0]   ram_read_wait_cycle,
@@ -69,27 +60,29 @@ module RAM (
     logic           prev_no_command_state;
     logic           enable_refresh;
     logic           write_protect;
-    logic           tandy_bios_select;
 
     logic   [1:0]   read_wait_count;
     logic   [1:0]   write_wait_count;
     logic           access_ready;
 
+    wire ems_bank_select = ems_b1 | ems_b2 | ems_b3 | ems_b4;
+    wire ems_page_frame  = `ENABLE_EMS && (address[19:16] == 4'b1101);
+
     //
-    // RAM Address Select (0x00000-0xAFFFF and 0xC0000-0xFFFFF)
+    // RAM Address Select (0x00000-0x9FFFF and 0xC0000-0xFFFFF).
+    // A0000-BFFFF is reserved for video.
+    // D0000-DFFFF is reserved for EMS and only responds for a mapped bank.
     //
-    assign ram_address_select_n = ~(enable_sdram && ~(address[19:16] == 4'b1011) &&  // B0000h reserved for VRAM
-	                               ~(~enable_a000h && address[19:16] == 4'b1010));    // A0000h is optional
+    assign ram_address_select_n = ~(enable_sdram && ~(address[19:17] == 3'b101) &&
+	                               (~ems_page_frame || ems_bank_select));
 	 
-
-    assign tandy_bios_select    = `ROM_IS_TANDY ? (tandy_bios_flag & (address[19:16] == 4'b1111)) : 1'b0;
-
 
     //
     // Write protect
     //
-    assign write_protect = bios_protect_flag[1] & (address[19:16] == 4'b1111)
-                         | bios_protect_flag[0] & (address[19:14] == 6'b111011);
+    assign write_protect = (bios_protect_flag[2] & (address[19:14] == 6'b110000))
+                         | (bios_protect_flag[1] & (address[19:16] == 4'b1111))
+                         | (bios_protect_flag[0] & (address[19:14] == 6'b111011));
 
 
     //
@@ -106,14 +99,19 @@ module RAM (
         else if (ems_b4)
             latch_address   = {1'b1, map_ems[3], address[13:0]};
         else
-            latch_address   = {1'b0, tandy_bios_select, address};
+            latch_address   = {2'b00, address};
     end
 
     // Data
+    // Freeze the write byte once the access leaves IDLE, instead of tracking
+    // the live data bus for the whole transaction. Otherwise a bus turnaround
+    // that happens to land inside RAM_WRITE_1/2 (most likely at the fastest
+    // CPU speed setting, where the write command pulse is only a few chipset
+    // clocks wide) can commit the wrong byte to SDRAM.
     always_ff @(posedge clock, posedge reset) begin
         if (reset)
             latch_data      <= 0;
-        else
+        else if (state == IDLE)
             latch_data      <= internal_data_bus;
     end
 
@@ -333,19 +331,24 @@ module RAM (
     //
     // Ready/Wait Signal
     //
+    // access_ready used to stay high through the whole access unless a
+    // refresh happened to already be in progress when the command was
+    // decoded. That makes RAM readiness effectively open-loop: at the
+    // fastest CPU speed setting the write command pulse (~2 CPU clocks) can
+    // close before the SDRAM controller has actually issued the write,
+    // silently dropping it (see docs/max-speed-stability.md, RC2). Track
+    // the access state machine directly instead: not ready as soon as a
+    // command is decoded in IDLE, ready again only once COMPLETE_RAM_RW is
+    // reached, i.e. after the SDRAM side has actually finished.
     always_ff @(posedge clock, posedge reset) begin
         if (reset)
             access_ready <= 1'b0;
         else if (state == COMPLETE_RAM_RW)
             access_ready <= 1'b1;
         else if (state == IDLE)
-            access_ready <= idle;
-        else if ((write_command) && (refresh_mode))
-            access_ready <= 1'b0;
-        else if ((read_command)  && (refresh_mode))
-            access_ready <= 1'b0;
+            access_ready <= idle & ~(write_command | read_command);
         else
-            access_ready <= access_ready;
+            access_ready <= 1'b0;
     end
 
     always_ff @(posedge clock, posedge reset) begin
