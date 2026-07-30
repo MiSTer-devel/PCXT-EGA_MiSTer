@@ -264,6 +264,7 @@ module emu
 		"P2O12,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%;",
 		"P2O89,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 		"P2OEG,Display,Full Color,Green,Amber,B&W,Red,Blue,Fuchsia,Purple;",
+		"P2OT,VGA Mode 13h,Off,On;",
 		"P2-;",
 		"P3,Hardware;",
 		"P3-;",
@@ -280,11 +281,13 @@ module emu
 	};
 
     wire forced_scandoubler;
+    wire vga_mode13_active_video;
     wire ega_dot_toggle;
     wire ega_dot_clock_sel;
     wire ega_scandouble_active;
     wire [1:0] buttons;
     wire [63:0] status;
+    wire vga_mode13_osd = status[29];
     wire [7:0]  xtctl;
 
     //Keyboard Ps2
@@ -971,6 +974,8 @@ module emu
 		.VGA_HBlank                         (HBlank),
 		.VGA_VBlank                         (VBlank),
 		.VGA_VBlank_border                  (VGA_VBlank_border),
+		.vga_mode13_osd                    (vga_mode13_osd),
+		.vga_mode13_active_out             (vga_mode13_active_video),
 	//	.address                            (address),
 		.address_ext                        (bios_access_address),
 		.ext_access_request                 (bios_access_request),
@@ -1315,7 +1320,7 @@ module emu
     wire [21:0] gamma_bus_video;
     wire        CE_PIXEL_video;
     reg         ce_pixel_28 = 1'b0;
-    wire        vga_video_direct = 1'b0;
+    wire        vga_video_direct = vga_mode13_active_video;
 
     // The EGA dot rate is no longer a fixed 14.318 MHz: in the 16.257 MHz
     // modes consecutive dots can land on adjacent clk_28_636 edges, which in
@@ -1386,8 +1391,10 @@ module emu
     wire haux_video, vaux_video, hbaux_video, vbaux_video;
 
     // Sync and blanking go through the converter with the colour so they come
-    // out of it with the same delay.  Mode 13h takes the undelayed pair below,
-    // the same way it bypasses the converter for the colour.
+    // out of it with the same delay.  Mode 13h only takes the undelayed pair
+    // below in Full Color: once a monochrome Display option is picked it has
+    // to run through the converter like every other mode, both for the tint
+    // and to stay time-aligned with it, or the picture is full colour again.
     video_monochrome_converter video_mono
 	(
 		.clk_vid(CLK_VIDEO_PIPELINE),
@@ -1417,13 +1424,14 @@ module emu
     wire       pre2x_LHBL, pre2x_LVBL;
     wire [7:0] pre2x_r, pre2x_g, pre2x_b;
     wire [23:0] credits_rgb_out;
-    wire [7:0] video_mixer_r = vga_video_direct ? {r, r[5:4]} : raux_video;
-    wire [7:0] video_mixer_g = vga_video_direct ? {g, g[5:4]} : gaux_video;
-    wire [7:0] video_mixer_b = vga_video_direct ? {b, b[5:4]} : baux_video;
-    wire video_mixer_hs = vga_video_direct ? HSync : haux_video;
-    wire video_mixer_vs = vga_video_direct ? VSync : vaux_video;
-    wire video_mixer_hb = vga_video_direct ? LHBL  : hbaux_video;
-    wire video_mixer_vb = vga_video_direct ? LVBL  : vbaux_video;
+    wire vga_video_direct_color = vga_video_direct && color;
+    wire [7:0] video_mixer_r = vga_video_direct_color ? {r, r[5:4]} : raux_video;
+    wire [7:0] video_mixer_g = vga_video_direct_color ? {g, g[5:4]} : gaux_video;
+    wire [7:0] video_mixer_b = vga_video_direct_color ? {b, b[5:4]} : baux_video;
+    wire video_mixer_hs = vga_video_direct_color ? HSync : haux_video;
+    wire video_mixer_vs = vga_video_direct_color ? VSync : vaux_video;
+    wire video_mixer_hb = vga_video_direct_color ? LHBL  : hbaux_video;
+    wire video_mixer_vb = vga_video_direct_color ? LVBL  : vbaux_video;
 	 
 
 	video_mixer #(.GAMMA(1)) video_mixer_main
