@@ -1,4 +1,4 @@
-# PCXT configuration
+# PCXT-EGA configuration
 set_global_assignment -name VERILOG_MACRO "SYSTEM_VARIANT_TANDY=0"
 set_global_assignment -name VERILOG_MACRO "ROM_VARIANT_TANDY=0"
 set_global_assignment -name VERILOG_MACRO "ENABLE_TANDY_VIDEO=0"

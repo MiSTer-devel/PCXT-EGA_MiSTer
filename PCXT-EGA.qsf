@@ -60,7 +60,7 @@ set_global_assignment -name SEED 1
 #set_global_assignment -name VERILOG_MACRO "MISTER_DEBUG_NOHDMI=1"
 
 source config.tcl
-set_global_assignment -name SYSTEMVERILOG_FILE PCXT.sv
+set_global_assignment -name SYSTEMVERILOG_FILE PCXT-EGA.sv
 
 source sys/sys.tcl
 source sys/sys_analog.tcl
