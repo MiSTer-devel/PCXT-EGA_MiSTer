@@ -161,7 +161,7 @@ reg [7:0] R20_underline_loc_e = 8'd0;
 reg [7:0] R21_v_blank_start_e = 8'd0;
 reg [7:0] R22_v_blank_end_e = 8'd0;
 reg [7:0] R23_mode_control_e = 8'h80;
-reg [7:0] R24_line_compare_e = 8'd0;
+reg [7:0] R24_line_compare_e = 8'hFF;
 reg       ega_status_vretrace = 1'b0;
 reg       ega_vert_blank_active_r = 1'b0;
 reg [3:0] ega_scanline_mod16 = 4'd0;
@@ -245,7 +245,7 @@ always @(posedge CLOCK) begin
 		R21_v_blank_start_e <= 8'd0;
 		R22_v_blank_end_e <= 8'd0;
 		R23_mode_control_e <= 8'h80;
-		R24_line_compare_e <= 8'd0;
+		R24_line_compare_e <= 8'hFF;
 	end else if (ENABLE & ~nCS & ~R_nW) begin
 		if (~RS) addr <= DI[4:0];
 		else begin
@@ -314,6 +314,24 @@ wire       frame_adj_CRTC1 = row_last && ~in_adj && R5_v_total_adj;
 wire       frame_adj = CRTC_TYPE ? frame_adj_CRTC1 : frame_adj_CRTC0;
 wire       frame_new = row_new & row_frame_last;
 
+// Line Compare / split screen. 86Box builds the compare in ega_recalctimings:
+//
+//     split = crtc[0x18];
+//     if (crtc[7] & 0x10) split |= 0x100;
+//     if (crtc[9] & 0x40) split |= 0x200;
+//     split++;
+//
+// and acts on it in ega_poll once the scanline counter has advanced:
+//
+//     if (vc == split) { memaddr = memaddr_backup = 0; scanline = 0; }
+//
+// so the scanline the register names is the last one drawn from the start
+// address, and the one after it restarts the display at address 0 with a fresh
+// character row. That is what keeps a status area pinned to the bottom of the
+// screen while everything above it scrolls.
+wire [9:0] eff_line_compare = {R9_v_max_line[6], R7_v_sync_pos[4], R24_line_compare_e} + 10'd1;
+wire       line_compare_hit = ega_crtc_semantics & row_new & (row_next == eff_line_compare);
+
 // x86Box remaps interleaved byte addresses; this core fetches independent
 // planes, so convert row_addr_r to byte space and return out_addr[17:2].
 wire [19:0] ega_remap_in_addr = {2'b00, row_addr_r, 2'b00};
@@ -372,6 +390,9 @@ always @(posedge CLOCK) begin
 				if(ega_crtc_semantics) line <= 5'd0;
 				field <= ~field & R8_interlace[0];
 			end
+			// The split restarts the character row as well as the address, so
+			// the lower screen does not inherit the scan line it landed on.
+			if(line_compare_hit) line <= 5'd0;
 		end
 	end
 end
@@ -412,6 +433,9 @@ always @(posedge CLOCK) begin
 			end else if(frame_new) begin
 				row_addr <= start_addr_latch;
 				row_addr_r <= start_addr_latch;
+			end else if(line_compare_hit) begin
+				row_addr <= 16'd0;
+				row_addr_r <= 16'd0;
 			end else if(line_last) begin
 				row_addr <= row_addr + ega_row_advance;
 				row_addr_r <= row_addr + ega_row_advance;

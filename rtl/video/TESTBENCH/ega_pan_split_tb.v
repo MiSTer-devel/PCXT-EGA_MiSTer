@@ -23,12 +23,23 @@
 //  needs is actually fetched, and that the window itself does not move against
 //  HSYNC - panning must shift the picture, not the raster.
 //
+//  The second half covers Line Compare and split screen, the other register
+//  that decides where a scanline is fetched from. 86Box builds the compare in
+//  ega_recalctimings and acts on it in ega_poll:
+//
+//      split = crtc[0x18] | overflow bit 8 | max scan line bit 9; split++;
+//      if (vc == split) { memaddr = memaddr_backup = 0; scanline = 0; }
+//
+//  so the scanline the register names is the last one drawn from the start
+//  address. Two regions with different patterns make it possible to read off,
+//  scanline by scanline, which one is on screen and which row of it.
+//
 //============================================================================
 
 `timescale 1ns/1ps
 `default_nettype wire
 
-module ega_pel_pan_tb;
+module ega_pan_split_tb;
 
     reg clk = 1'b0;
     always #17.462 clk = ~clk;   // 28.636363 MHz video clock
@@ -325,6 +336,93 @@ module ega_pel_pan_tb;
         end
     endtask
 
+    // ------------------------------------------------------- split screen ---
+    // Two regions that are told apart by where the lit dot sits in the line:
+    // the top one is fetched from the start address and lights dot 16, the
+    // bottom one from address 0 and lights dot 48.
+    localparam integer SPLIT_START_ADDR = 16'h0040;
+    localparam integer SPLIT_TOP_DOT    = 16;
+    localparam integer SPLIT_BOTTOM_DOT = 48;
+
+    task split_pattern;
+        begin
+            for (i = 0; i < 256; i = i + 1) vram_p0[i] = 8'h00;
+            // bottom region: rows based at address 0, dot in the fourth cell
+            for (i = 0; i < 8; i = i + 1) vram_p0[(i * 8) + 3] = 8'h80;
+            // top region: rows based at the start address, dot in the second
+            for (i = 0; i < 8; i = i + 1) vram_p0[SPLIT_START_ADDR + (i * 8) + 1] = 8'h80;
+        end
+    endtask
+
+    integer scan_lit [0:15];
+    integer scan_lines;
+
+    // Walk one frame and record, for every displayed scanline, where its first
+    // lit dot sits relative to the start of the window.
+    task split_profile;
+        begin
+            @(negedge vblank);
+            scan_lines = 0;
+            while (vblank == 1'b0 && scan_lines < 16) begin
+                first_lit = -1; lit_count = 0;
+                @(posedge clk);
+                wait ((de_o == 1'b1) || (vblank == 1'b1));
+                if (vblank == 1'b0) begin
+                    wait ((de_o == 1'b0) || (vblank == 1'b1));
+                    scan_lit[scan_lines] = (first_lit < 0) ? -1 : (first_lit - de_start);
+                    scan_lines = scan_lines + 1;
+                end
+            end
+        end
+    endtask
+
+    integer sl;
+    integer exp_lit [0:15];
+
+    // Bottom region with a dot that moves one cell right per character row, so
+    // the profile shows not just which region is on screen but which row of it.
+    task split_pattern_rows;
+        begin
+            for (i = 0; i < 256; i = i + 1) vram_p0[i] = 8'h00;
+            for (i = 0; i < 8; i = i + 1) vram_p0[(i * 8) + 3 + i] = 8'h80;
+            for (i = 0; i < 8; i = i + 1) vram_p0[SPLIT_START_ADDR + (i * 8) + 1] = 8'h80;
+        end
+    endtask
+
+    task check_split_profile(input [255:0] label, input integer line_compare);
+        begin
+            crtc_write(8'h18, line_compare[7:0]);
+            repeat (3) @(negedge vblank);
+            split_profile;
+            for (sl = 0; sl < scan_lines; sl = sl + 1) begin
+                checks = checks + 1;
+                if (scan_lit[sl] !== exp_lit[sl]) begin
+                    errors = errors + 1;
+                    $display("FAIL %0s scanline %0d: dot %0d, expected %0d",
+                             label, sl, scan_lit[sl], exp_lit[sl]);
+                end
+            end
+        end
+    endtask
+
+    task check_split(input integer line_compare, input integer first_bottom_line);
+        begin
+            crtc_write(8'h18, line_compare[7:0]);
+            repeat (3) @(negedge vblank);
+            split_profile;
+            for (sl = 0; sl < scan_lines; sl = sl + 1) begin
+                checks = checks + 1;
+                if (scan_lit[sl] !== ((sl < first_bottom_line) ? SPLIT_TOP_DOT
+                                                               : SPLIT_BOTTOM_DOT)) begin
+                    errors = errors + 1;
+                    $display("FAIL split lc=%0d scanline %0d: dot %0d, expected %0d",
+                             line_compare, sl, scan_lit[sl],
+                             (sl < first_bottom_line) ? SPLIT_TOP_DOT : SPLIT_BOTTOM_DOT);
+                end
+            end
+        end
+    endtask
+
     // --------------------------------------------------------------- probe --
     task probe_pattern;
         begin
@@ -441,6 +539,42 @@ module ega_pel_pan_tb;
                          pan, got_shift, (pan < 8) ? (2 * pan) : -2);
             end
         end
+
+        // --- Line Compare / split screen ------------------------------------
+        // The scanline the register names is the last one drawn from the start
+        // address; the next one restarts at address 0. 0FFh, what the BIOS
+        // writes in every ordinary mode, must never split.
+        attr_write(8'h13, 8'h00);
+        split_pattern;
+        crtc_write(8'h0C, SPLIT_START_ADDR >> 8);
+        crtc_write(8'h0D, SPLIT_START_ADDR & 8'hFF);
+        crtc_write(8'h07, 8'h00);       // overflow: line compare bit 8 clear
+        repeat (4) @(negedge vblank);
+
+        check_split(8'hFF, 99);         // no split anywhere in the frame
+        check_split(0, 1);              // only the first scanline is the top
+        check_split(2, 3);
+        check_split(4, 5);
+
+        // Bit 8 lives in the overflow register, so a compare past 255 must not
+        // fold back into the visible frame.
+        crtc_write(8'h07, 8'h10);
+        check_split(0, 99);
+        crtc_write(8'h07, 8'h00);
+
+        // Two scanlines per character row, which is the case that shows whether
+        // the split restarted the character row as well as the address: rows 0
+        // and 1 of the lower screen must each get their two scanlines. Without
+        // the reset the lower screen inherits the scan line it landed on and
+        // steps to the next row half a cell early.
+        split_pattern_rows;
+        crtc_write(8'h09, 8'h01);
+        repeat (4) @(negedge vblank);
+        exp_lit[0] = 16; exp_lit[1] = 16; exp_lit[2] = 16;
+        exp_lit[3] = 48; exp_lit[4] = 48; exp_lit[5] = 64;
+        check_split_profile("split, 2 scanline cells", 2);
+        crtc_write(8'h09, 8'h00);
+        split_pattern;
 
         $display("");
         $display("%0d checks, %0d failed", checks, errors);
