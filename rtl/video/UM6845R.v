@@ -405,6 +405,7 @@ wire row_addr_save = hcc == R1_h_displayed && (CRTC_TYPE ? line_last : line_last
 reg  [15:0] row_addr;   // saved pointer
 reg  [15:0] row_addr_r; // current pointer
 reg  [15:0] start_addr_latch;
+reg  [15:0] start_addr_vsync;
 reg  [15:0] start_addr_frame;
 wire [15:0] crtc_reg_start_addr = {R12_start_addr_h, R13_start_addr_l};
 reg  [13:0] cursor_addr_frame;
@@ -412,27 +413,44 @@ wire [13:0] crtc_reg_cursor_addr = {R14_cursor_h, R15_cursor_l};
 wire [15:0] ega_row_advance = R9_v_max_line[7] ? {6'd0, R19_offset_e, 2'b00} :
                                                    {7'd0, R19_offset_e, 1'b0};
 wire        ega_ma_mode = ega_crtc_semantics && |R19_offset_e;
+// 86Box samples the start address where it raises the retrace status bit, in
+// ega_poll under "vc == vsyncstart":
+//
+//     ega->memaddr = ega->memaddr_backup = ega->memaddr_latch;
+//
+// not at the end of the frame. The distinction is the whole of smooth
+// scrolling. Software scrolls by writing the start address, waiting for
+// retrace, then writing the panning value for the same step - so the write for
+// the *next* step lands just after retrace begins, in the same blanking
+// interval. Sampled at retrace it waits for the following frame and stays in
+// step with its panning value; sampled at the end of the frame it overtakes it
+// by one frame, and the picture jumps a character backwards every eighth step
+// while moving smoothly in between.
+wire        ega_start_addr_sample = ega_crtc_semantics & row_new &
+                                    (row_next == eff_v_sync_pos);
 wire [15:0] crtc1_reload_addr = ega_crtc_semantics ?
-                                (frame_new ? start_addr_latch : start_addr_frame) :
+                                (frame_new ? start_addr_vsync : start_addr_frame) :
                                 crtc_reg_start_addr;
 always @(posedge CLOCK) begin
 	if(~nRESET) begin
 		row_addr <= crtc_reg_start_addr;
 		row_addr_r <= crtc_reg_start_addr;
+		start_addr_vsync <= crtc_reg_start_addr;
 		start_addr_frame <= crtc_reg_start_addr;
 		cursor_addr_frame <= crtc_reg_cursor_addr;
 	end
 	else if(CLKEN) begin
+		if(ega_start_addr_sample) start_addr_vsync <= start_addr_latch;
 		if(ega_crtc_semantics && frame_new) begin
-			start_addr_frame <= start_addr_latch;
+			start_addr_frame <= start_addr_vsync;
 			cursor_addr_frame <= crtc_reg_cursor_addr;
 		end
 		if(ega_ma_mode) begin
 			if(!hcc_last) begin
 				row_addr_r <= row_addr_r + 16'd1;
 			end else if(frame_new) begin
-				row_addr <= start_addr_latch;
-				row_addr_r <= start_addr_latch;
+				row_addr <= start_addr_vsync;
+				row_addr_r <= start_addr_vsync;
 			end else if(line_compare_hit) begin
 				row_addr <= 16'd0;
 				row_addr_r <= 16'd0;

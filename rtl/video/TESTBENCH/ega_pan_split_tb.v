@@ -423,6 +423,118 @@ module ega_pan_split_tb;
         end
     endtask
 
+    // ------------------------------------------------------ smooth scroll ---
+    // A byte granular start address plus a panning value is how EGA software
+    // scrolls one pixel at a time, and the two have to reach the screen on the
+    // same frame or the picture stutters at every character boundary while
+    // moving smoothly in between. Filling memory with a pattern that repeats
+    // every four characters makes one lit dot per 64 dots, so the position of
+    // the first one reads the combined scroll modulo 64: one step of the
+    // software loop must move it exactly one visible pixel.
+    localparam integer SCROLL_BASE   = 256;
+    localparam integer SCROLL_PERIOD = 64;
+
+    task scroll_pattern;
+        begin
+            for (i = 0; i < 1024; i = i + 1)
+                vram_p0[i] = ((i % 4) == 0) ? 8'h80 : 8'h00;
+        end
+    endtask
+
+    // Passive monitor: the stimulus below must run at exactly the pace the
+    // software sets, so nothing may wait on the display to take a measurement.
+    reg        scroll_watch = 1'b0;
+    integer    frame_pos [0:63];
+    integer    frame_count = 0;
+    integer    mon_state = 0;
+    integer    mon_dot = 0;
+    integer    mon_first = -1;
+    reg        mon_vblank_q = 1'b0;
+    reg        mon_de_q = 1'b0;
+
+    always @(posedge clk) begin
+        if (ce_pix) begin
+            mon_vblank_q <= vblank;
+            mon_de_q <= de_o;
+
+            if (mon_state == 0) begin
+                if (mon_vblank_q && !vblank) mon_state <= 1;
+            end else if (mon_state == 1) begin
+                if (de_o && !mon_de_q) begin
+                    mon_dot   <= 1;
+                    mon_first <= lit ? 0 : -1;
+                    mon_state <= 2;
+                end
+            end else begin
+                if (de_o) begin
+                    mon_dot <= mon_dot + 1;
+                    if (lit && (mon_first < 0)) mon_first <= mon_dot;
+                end
+                if (!de_o && mon_de_q) begin
+                    if (scroll_watch && (frame_count < 64)) begin
+                        frame_pos[frame_count] <= mon_first;
+                        frame_count <= frame_count + 1;
+                    end
+                    mon_state <= 0;
+                end
+            end
+        end
+    end
+
+    // Poll Input Status 1 bit 3 the way wait_vsync() does. The DUT signal is
+    // read directly rather than through hundreds of I/O cycles: what this is
+    // reproducing is where the writes land inside the frame, and that is not
+    // changed by finding the edge a microsecond sooner.
+    task wait_vretrace_rise;
+        begin
+            @(posedge clk);
+            wait (dut.ega_status_reg[3] == 1'b0);
+            wait (dut.ega_status_reg[3] == 1'b1);
+        end
+    endtask
+
+    integer xi;
+    integer off;
+
+    // The loop from the EGA test program: start address for this step, wait for
+    // vertical retrace, then the panning value for the same step.
+    task software_scroll_loop(input integer steps);
+        begin
+            for (xi = 0; xi < steps; xi = xi + 1) begin
+                off = SCROLL_BASE + (xi / 8);
+                crtc_write(8'h0C, (off >> 8) & 8'hFF);
+                crtc_write(8'h0D, off & 8'hFF);
+                wait_vretrace_rise;
+                attr_write_via_3c1(8'h13, (xi % 8));
+            end
+        end
+    endtask
+
+    integer fp;
+    integer delta;
+    integer settle;
+
+    task check_smooth_scroll;
+        begin
+            // The first frames carry the start of the sequence; judge the run
+            // once both halves are being updated every frame.
+            settle = 4;
+            for (fp = settle; fp < frame_count - 1; fp = fp + 1) begin
+                delta = frame_pos[fp + 1] - frame_pos[fp];
+                if (delta > 0) delta = delta - SCROLL_PERIOD;   // wrapped
+                checks = checks + 1;
+                if ((frame_pos[fp] < 0) || (frame_pos[fp + 1] < 0)) begin
+                    errors = errors + 1;
+                    $display("FAIL smooth scroll: frame %0d has no lit dot", fp);
+                end else if (delta !== -2) begin
+                    errors = errors + 1;
+                    $display("FAIL smooth scroll: frame %0d -> %0d moved %0d dots, expected -2  (%0d -> %0d)",
+                             fp, fp + 1, delta, frame_pos[fp], frame_pos[fp + 1]);
+                end
+            end
+        end
+    endtask
+
     // --------------------------------------------------------------- probe --
     task probe_pattern;
         begin
@@ -575,6 +687,23 @@ module ega_pan_split_tb;
         check_split_profile("split, 2 scanline cells", 2);
         crtc_write(8'h09, 8'h00);
         split_pattern;
+
+        // --- smooth scrolling, start address and panning together -----------
+        crtc_write(8'h18, 8'hFF);       // no split
+        attr_write(8'h13, 8'h00);
+        scroll_pattern;
+        crtc_write(8'h0C, SCROLL_BASE >> 8);
+        crtc_write(8'h0D, SCROLL_BASE & 8'hFF);
+        repeat (4) @(negedge vblank);
+        frame_count = 0;
+        scroll_watch = 1'b1;
+        software_scroll_loop(24);
+        scroll_watch = 1'b0;
+        $display("scroll positions:");
+        for (fp = 0; fp < frame_count; fp = fp + 1)
+            $write(" %0d", frame_pos[fp]);
+        $display("");
+        check_smooth_scroll;
 
         $display("");
         $display("%0d checks, %0d failed", checks, errors);
