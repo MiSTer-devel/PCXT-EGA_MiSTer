@@ -27,7 +27,13 @@ module ega_vgaport (
             red = red_64;
             green = green_64;
             blue = blue_64;
-        end else if (color == 6'h06) begin
+        // The brown fix. In the 16 colour interpretation bits 3 and 5 carry no
+        // weight at all, so every value that agrees with 06h on the bits that
+        // do - 06h, 0Eh, 26h and 2Eh - is the same dark yellow and all four
+        // have to become brown. 86Box masks with 17h for exactly this reason;
+        // matching only 06h left the other three yellow, which a 64 entry
+        // gradient walks straight through.
+        end else if ((color & 6'h17) == 6'h06) begin
             red = 6'd42;
             green = 6'd21;
             blue = 6'd0;

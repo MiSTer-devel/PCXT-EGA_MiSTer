@@ -151,7 +151,16 @@ module ega_attrib_ctrl (
                     color_out <= 6'h00;
                 end
 
-                display_enable_out <= display_enable && video_enable_reg;
+                // Palette Address Source takes the beam dark, it does not stop
+                // the raster: the CRTC keeps scanning and the line is still
+                // drawn, in black. 86Box models it the same way, by swapping
+                // the renderer for ega_render_blank rather than by changing any
+                // timing. Folding it into the display enable instead punched a
+                // hole in the active window every time software cleared the
+                // bit - and a 64 colour raster bar effect clears it twice per
+                // scanline, which left the scaler with no stable window to lock
+                // to and the picture tearing.
+                display_enable_out <= display_enable;
                 video_enable_out <= video_enable_reg;
             end
         end

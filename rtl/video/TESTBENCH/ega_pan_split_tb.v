@@ -239,6 +239,7 @@ module ega_pan_split_tb;
     integer first_lit = -1;
     integer lit_count = 0;
     integer de_start = 0;
+    integer de_dots = 0;
     reg     prev_de = 1'b0;
     reg     prev_hsync = 1'b0;
 
@@ -253,6 +254,8 @@ module ega_pan_split_tb;
 
             if (de_o && !prev_de) de_start <= dot_count;
             prev_de <= de_o;
+
+            if (de_o) de_dots <= de_dots + 1;
 
             if (de_o && lit) begin
                 if (first_lit < 0) first_lit <= dot_count;
@@ -551,6 +554,71 @@ module ega_pan_split_tb;
         end
     endtask
 
+    // ------------------------------------------ Palette Address Source ------
+    // Clearing bit 5 of an attribute controller index write takes the beam
+    // dark. It must not take the raster with it: the CRTC keeps scanning and
+    // the line is still drawn, in black, which is what 86Box does by swapping
+    // in ega_render_blank. A 64 colour raster bar effect clears and sets this
+    // bit twice per scanline, so if the display window disappears with it the
+    // scaler has nothing stable to lock to.
+    //
+    // Sampled over a whole field rather than by waiting on display enable
+    // edges, because the failure being guarded against is display enable never
+    // asserting at all.
+    integer pas_de, pas_lit;
+
+    task sample_field(output integer de_out, output integer lit_out);
+        begin
+            @(negedge vblank);
+            de_dots = 0;
+            lit_count = 0;
+            @(posedge vblank);
+            de_out = de_dots;
+            lit_out = lit_count;
+        end
+    endtask
+
+    task check_pas;
+        begin
+            solid_pattern;
+            repeat (2) @(negedge vblank);
+            sample_field(pas_de, pas_lit);
+            checks = checks + 1;
+            if (pas_de <= 0) begin
+                errors = errors + 1;
+                $display("FAIL PAS baseline: no display enable at all");
+            end
+
+            // Palette Address Source cleared: index write with bit 5 low.
+            attr_reset_ff;
+            io_write(15'h03C0, 8'h01);
+            repeat (2) @(negedge vblank);
+            sample_field(pas_de, pas_lit);
+            checks = checks + 1;
+            if (pas_de <= 0) begin
+                errors = errors + 1;
+                $display("FAIL PAS=0: the display window vanished, the raster must survive");
+            end
+            checks = checks + 1;
+            if (pas_lit !== 0) begin
+                errors = errors + 1;
+                $display("FAIL PAS=0: %0d lit dots, the beam should be dark", pas_lit);
+            end
+
+            // and back on
+            attr_reset_ff;
+            io_write(15'h03C0, 8'h20);
+            repeat (2) @(negedge vblank);
+            sample_field(pas_de, pas_lit);
+            checks = checks + 1;
+            if (pas_lit <= 0) begin
+                errors = errors + 1;
+                $display("FAIL PAS=1: the picture did not come back");
+            end
+            probe_pattern;
+        end
+    endtask
+
     // --------------------------------------------------------------- probe --
     task probe_pattern;
         begin
@@ -724,6 +792,14 @@ module ega_pan_split_tb;
             $write(" %0d", frame_pos[fp]);
         $display("");
         check_smooth_scroll;
+
+        // --- Palette Address Source ------------------------------------------
+        seq_write(8'h01, 8'h09);
+        gfx_write(8'h06, 8'h05);
+        attr_write(8'h10, 8'h01);
+        attr_write(8'h13, 8'h00);
+        repeat (4) @(negedge vblank);
+        check_pas;
 
         $display("");
         $display("%0d checks, %0d failed", checks, errors);
