@@ -713,7 +713,17 @@ always @(posedge CLOCK) begin
 	else if (CLKEN) begin
 		if (line == R10_cursor_start)
 			cursor_line <= 1;
-		else if (line == R11_cursor_end)
+		// Also clear at the last scanline of the row (line_max), the way
+		// 86Box does it: "if (scanline == crtc[11] || scanline == rowcount)
+		// cursorvisible = 0". Cursor-end values a BIOS hands out can land
+		// past the last real scanline of the current font - the IBM EGA
+		// BIOS's CGA cursor-shape emulation adds 5 to both start and end
+		// under an Enhanced Color Display switch reading, which can push a
+		// 14-line-native end value out of the 0-13 range entirely - and
+		// line never reaches an out-of-range R11, so without this OR the
+		// cursor would latch on at R10 and never turn off again for the
+		// rest of the frame instead of just spilling past the row.
+		else if (line == R11_cursor_end || line == line_max)
 			cursor_line <= 0;
 		end
 	end
