@@ -174,6 +174,7 @@ module CHIPSET #(
     logic           dma_page_chip_select_n;
     logic           memory_access_ready;
     logic           video_memory_access_ready;
+    logic           video_io_access_ready;
     logic           ram_address_select_n;
     logic   [7:0]   internal_data_bus;
     logic   [7:0]   internal_data_bus_ext;
@@ -261,7 +262,7 @@ module CHIPSET #(
         .processor_ready                    (processor_ready),
         .dma_ready                          (dma_ready),
         .dma_wait_n                         (dma_wait_n),
-        .io_channel_ready                   (io_channel_ready & memory_access_ready & video_memory_access_ready & io_settle_ready),
+        .io_channel_ready                   (io_channel_ready & memory_access_ready & video_memory_access_ready & io_settle_ready & video_io_access_ready),
         .io_read_n                          (io_read_n),
         .io_write_n                         (io_write_n),
         .memory_read_n                      (memory_read_n),
@@ -352,6 +353,7 @@ module CHIPSET #(
         .memory_write_n                     (memory_write_n),
         .address_enable_n                   (address_enable_n),
         .video_memory_access_ready            (video_memory_access_ready),
+        .video_io_access_ready              (video_io_access_ready),
         .timer_counter_out                  (timer_counter_out),
         .speaker_out                        (speaker_out),
         .port_a_out                         (port_a_out),

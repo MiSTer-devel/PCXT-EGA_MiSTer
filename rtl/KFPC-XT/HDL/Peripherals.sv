@@ -59,6 +59,7 @@ module PERIPHERALS #(
         input   logic           memory_write_n,
         input   logic           address_enable_n,
         output  logic           video_memory_access_ready,
+        output  logic           video_io_access_ready,
         // Peripherals
         output  logic   [2:0]   timer_counter_out,
         output  logic           speaker_out,
@@ -883,25 +884,29 @@ end
     logic          ega_mem_select_2;
     logic          ega_mem_write_1;
     logic          ega_mem_write_2;
-    always_ff @(posedge clock)
-    begin
-        // The address is needed for reads as well as writes, so it latches on
-        // either strobe. The data must not: on a read internal_data_bus carries
-        // what the card itself is driving back (data_bus_out -> ... ->
-        // internal_data_bus), so latching it here fed the EGA's own read data
-        // into its bus_d input a few clocks later. Nothing in ega_top consumes
-        // bus_d except write paths, and that loop broke every qualified read.
-        // See the bus_addr_settled / bus_write_settled note in ega_top.v.
-        if (~io_write_n | ~io_read_n)
-            video_io_address    <= address[13:0];
-        else
-            video_io_address    <= video_io_address;
-
-        if (~io_write_n)
-            video_io_data       <= internal_data_bus;
-        else
-            video_io_data       <= video_io_data;
-    end
+    // The I/O cycle towards the video clock domain used to be a live registered
+    // copy of the bus, which left every write racing the far side's two-sample
+    // qualifier; at the PC/AT 3.5MHz setting the pulse is barely as long as the
+    // qualifier needs and writes were lost by clock phase. The stretcher posts
+    // each write with a guaranteed minimum width instead. Address latching for
+    // reads and the write-only data latch (see the note that used to live here:
+    // on a read internal_data_bus carries the card's own reply, so data must
+    // never latch under the read strobe) are preserved inside it.
+    ega_io_stretch u_ega_io_stretch (
+        .clock                  (clock),
+        .reset                  (reset),
+        .io_write_n             (io_write_n),
+        .io_read_n              (io_read_n),
+        .address_enable_n       (address_enable_n),
+        .address                ({1'b0, address[13:0]}),
+        .write_data             (internal_data_bus),
+        .video_address          (video_io_address),
+        .video_data             (video_io_data),
+        .video_io_write_n       (video_io_write_n),
+        .video_io_read_n        (video_io_read_n),
+        .video_address_enable_n (video_address_enable_n),
+        .access_ready           (video_io_access_ready)
+    );
 
     always_ff @(posedge clock)
     begin
@@ -910,10 +915,6 @@ end
         video_memory_write_n    <= memory_write_n;
         ega_mem_select_sys      <= ega_mem_select;
         ega_mem_write_sys       <= ega_mem_select & ~memory_write_n;
-
-        video_io_write_n        <= io_write_n;
-        video_io_read_n         <= io_read_n;
-        video_address_enable_n  <= address_enable_n;
     end
 
     always_ff @(posedge clock or posedge reset)
