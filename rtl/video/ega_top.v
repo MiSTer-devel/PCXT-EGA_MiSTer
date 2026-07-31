@@ -384,8 +384,8 @@ module ega_top(
     localparam [4:0] EGA_VISIBLE_ADJ_TEXT_1X_B   = 5'd0;
     localparam [4:0] EGA_VISIBLE_ADJ_TEXT_DIV2_A = 5'd3;
     localparam [4:0] EGA_VISIBLE_ADJ_TEXT_DIV2_B = 5'd3;
-    localparam [4:0] EGA_VISIBLE_ADJ_GFX_1X_A    = 5'd1;
-    localparam [4:0] EGA_VISIBLE_ADJ_GFX_1X_B    = 5'd1;
+    localparam [4:0] EGA_VISIBLE_ADJ_GFX_1X_A    = 5'd3;
+    localparam [4:0] EGA_VISIBLE_ADJ_GFX_1X_B    = 5'd3;
     localparam [4:0] EGA_VISIBLE_ADJ_GFX_DIV2_A  = 5'd7;
     localparam [4:0] EGA_VISIBLE_ADJ_GFX_DIV2_B  = 5'd7;
 

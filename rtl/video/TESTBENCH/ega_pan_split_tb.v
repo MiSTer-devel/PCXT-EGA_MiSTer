@@ -279,18 +279,34 @@ module ega_pan_split_tb;
 
     integer lit_at, lit_dots, win;
     integer pan;
+    integer probe_dot;
     integer probe_ref;
     integer got_shift;
 
     // Everything is measured against where the probe sits at pan 0, so the test
     // states what panning does and stays silent about the fixed pipeline
     // alignment of each mode, which is tuned elsewhere and is not its business.
-    task capture_reference;
+    // Also pins the pipeline alignment. probe_dot is where the lit dot sits in
+    // the row; probe_ref is where it lands in the displayed window. They differ
+    // by however many dots of the row fall off the left edge, which must be
+    // zero - the delay from the CRTC's display enable to the first dot reaching
+    // the attribute controller is a fixed property of each mode's fetch path,
+    // and if the window is tapped later than that, the leftmost pixels of every
+    // row are simply cut. The one legitimate exception is a 9 dot cell with the
+    // panning register at 0, where the EGA table itself asks for one dot of
+    // shift and the BIOS writes 08h to cancel it.
+    task capture_reference(input [255:0] label, input integer expected_lost);
         begin
             attr_write(8'h13, 8'h00);
             measure(lit_at, lit_dots, win);
             probe_ref  = lit_at - win;
             window_ref = win;
+            checks = checks + 1;
+            if ((probe_dot - probe_ref) !== expected_lost) begin
+                errors = errors + 1;
+                $display("FAIL %0s alignment: %0d dots of the row fall off the left edge, expected %0d",
+                         label, probe_dot - probe_ref, expected_lost);
+            end
         end
     endtask
 
@@ -600,9 +616,10 @@ module ega_pan_split_tb;
         repeat (8) @(negedge vblank);
 
         // --- graphics, 8 dot characters, halved dot clock (mode 0Dh) --------
+        probe_dot = 32;
         // Each step is one 320 wide pixel, which is what makes a program that
         // scrolls a byte at a time plus a panning value scroll smoothly.
-        capture_reference;
+        capture_reference("gfx 320", 0);
         for (pan = 0; pan < 16; pan = pan + 1)
             check_shift("gfx 320", pan, (pan < 8) ? (2 * pan) : -2);
         check_window_fixed("gfx 320");
@@ -617,7 +634,8 @@ module ega_pan_split_tb;
         // --- graphics, 8 dot characters, full dot clock (mode 10h) ----------
         seq_write(8'h01, 8'h01);
         repeat (4) @(negedge vblank);
-        capture_reference;
+        probe_dot = 16;
+        capture_reference("gfx 640", 0);
         for (pan = 0; pan < 16; pan = pan + 1)
             check_shift("gfx 640", pan, (pan < 8) ? pan : -1);
         check_window_fixed("gfx 640");
@@ -629,7 +647,8 @@ module ega_pan_split_tb;
         gfx_write(8'h06, 8'h04);
         attr_write(8'h10, 8'h00);
         repeat (4) @(negedge vblank);
-        capture_reference;
+        probe_dot = 18;
+        capture_reference("text 9 dot", 1);
         for (pan = 0; pan < 16; pan = pan + 1)
             check_shift("text 9 dot", pan, (pan < 8) ? pan : -1);
         check_window_fixed("text 9 dot");
@@ -639,7 +658,8 @@ module ega_pan_split_tb;
         gfx_write(8'h06, 8'h05);
         attr_write(8'h10, 8'h01);
         repeat (4) @(negedge vblank);
-        capture_reference;
+        probe_dot = 32;
+        capture_reference("gfx 320", 0);
         for (pan = 0; pan < 16; pan = pan + 1) begin
             attr_write_via_3c1(8'h13, pan[7:0]);
             measure(lit_at, lit_dots, win);
