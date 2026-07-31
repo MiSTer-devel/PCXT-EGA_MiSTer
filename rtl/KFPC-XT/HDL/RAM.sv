@@ -55,6 +55,7 @@ module RAM (
 
     state_t         state;
     state_t         next_state;
+    logic   [21:0]  decoded_address;
     logic   [21:0]  latch_address;
     logic   [7:0]   latch_data;
     logic           write_command;
@@ -95,15 +96,26 @@ module RAM (
     // Address
     always_comb begin
         if (ems_b1)
-            latch_address   = {1'b1, map_ems[0], address[13:0]};
+            decoded_address = {1'b1, map_ems[0], address[13:0]};
         else if (ems_b2)
-            latch_address   = {1'b1, map_ems[1], address[13:0]};
+            decoded_address = {1'b1, map_ems[1], address[13:0]};
         else if (ems_b3)
-            latch_address   = {1'b1, map_ems[2], address[13:0]};
+            decoded_address = {1'b1, map_ems[2], address[13:0]};
         else if (ems_b4)
-            latch_address   = {1'b1, map_ems[3], address[13:0]};
+            decoded_address = {1'b1, map_ems[3], address[13:0]};
         else
-            latch_address   = {2'b00, address};
+            decoded_address = {2'b00, address};
+    end
+
+    // Keep the address after the bus cycle has released MEMW. KFSDRAM needs
+    // the live decoded value for ACTIVE on the acceptance edge (while this
+    // register still contains the previous access), then uses this copy for
+    // the column command and the rest of the transaction.
+    always_ff @(posedge clock, posedge reset) begin
+        if (reset)
+            latch_address <= 22'd0;
+        else if (state == IDLE)
+            latch_address <= decoded_address;
     end
 
     // Data
@@ -141,8 +153,8 @@ module RAM (
     //
     // SDRAM Controller
     //
-    logic   [24:0]  access_address;
-    logic   [9:0]   access_num;
+    logic   [23:0]  access_address;
+    logic   [8:0]   access_num;
     logic   [15:0]  access_data_in;
     logic   [15:0]  access_data_out;
     logic           write_request;
@@ -191,15 +203,15 @@ module RAM (
                 else if (read_command)
                     next_state = RAM_READ_1;
             end
+            // Once accepted, a write owns its address and byte and must reach
+            // SDRAM even if the short 25 MHz MEMW pulse has already ended.
+            // Reads still abort below because their result has no recipient
+            // after MEMR is released.
             RAM_WRITE_1: begin
-                if (~write_command)
-                    next_state = WAIT;
                 if (write_flag)
                     next_state = RAM_WRITE_2;
             end
             RAM_WRITE_2: begin
-                if (~write_command)
-                    next_state = WAIT;
                 if (~write_flag)
                     next_state = COMPLETE_RAM_RW;
             end
@@ -228,9 +240,9 @@ module RAM (
 
     always_ff @(posedge clock, posedge reset) begin
         if (reset)
-            state = IDLE;
+            state <= IDLE;
         else
-            state = next_state;
+            state <= next_state;
     end
 
     always_ff @(posedge clock, posedge reset) begin
@@ -249,8 +261,11 @@ module RAM (
     always_comb begin
         casez (state)
             IDLE: begin
-                access_address  = {7'h00, latch_address};
-                access_num      = 10'h001;
+                // KFSDRAM captures row/bank on the same edge that RAM latches
+                // this access. The registered address is therefore still one
+                // cycle old here; use the live decode for ACTIVE only.
+                access_address  = {2'b00, decoded_address};
+                access_num      = 9'h001;
                 access_data_in  = {8'h00, latch_data};
                 write_request   = write_command ? 1'b1 : 1'b0;
                 read_request    = read_command  ? 1'b1 : 1'b0;
@@ -258,8 +273,8 @@ module RAM (
                 sdram_udqm      = 1'b0;
             end
             RAM_WRITE_1: begin
-                access_address  = {7'h00, latch_address};
-                access_num      = 10'h001;
+                access_address  = {2'b00, latch_address};
+                access_num      = 9'h001;
                 access_data_in  = {8'h00, latch_data};
                 write_request   = 1'b1;
                 read_request    = 1'b0;
@@ -267,8 +282,8 @@ module RAM (
                 sdram_udqm      = 1'b0;
             end
             RAM_WRITE_2: begin
-                access_address  = {7'h00, latch_address};
-                access_num      = 10'h001;
+                access_address  = {2'b00, latch_address};
+                access_num      = 9'h001;
                 access_data_in  = {8'h00, latch_data};
                 write_request   = 1'b0;
                 read_request    = 1'b0;
@@ -276,8 +291,8 @@ module RAM (
                 sdram_udqm      = 1'b0;
             end
             RAM_READ_1: begin
-                access_address  = {7'h00, latch_address};
-                access_num      = 10'h001;
+                access_address  = {2'b00, latch_address};
+                access_num      = 9'h001;
                 access_data_in  = 16'h0000;
                 write_request   = 1'b0;
                 read_request    = 1'b1;
@@ -285,8 +300,8 @@ module RAM (
                 sdram_udqm      = 1'b0;
             end
             RAM_READ_2: begin
-                access_address  = {7'h00, latch_address};
-                access_num      = 10'h001;
+                access_address  = {2'b00, latch_address};
+                access_num      = 9'h001;
                 access_data_in  = 16'h0000;
                 write_request   = 1'b0;
                 read_request    = 1'b0;
@@ -294,8 +309,8 @@ module RAM (
                 sdram_udqm      = 1'b0;
             end
             COMPLETE_RAM_RW: begin
-                access_address  = 25'h0000000;
-                access_num      = 10'h001;
+                access_address  = 24'h000000;
+                access_num      = 9'h001;
                 access_data_in  = 16'h0000;
                 write_request   = 1'b0;
                 read_request    = 1'b0;
@@ -303,8 +318,8 @@ module RAM (
                 sdram_udqm      = 1'b0;
             end
             WAIT: begin
-                access_address  = 25'h0000000;
-                access_num      = 10'h001;
+                access_address  = 24'h000000;
+                access_num      = 9'h001;
                 access_data_in  = 16'h0000;
                 write_request   = 1'b0;
                 read_request    = 1'b0;
