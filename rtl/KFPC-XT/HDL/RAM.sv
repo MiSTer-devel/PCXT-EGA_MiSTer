@@ -39,9 +39,11 @@ module RAM (
      input   logic   [6:0]   map_ems[0:3],
      input   logic           ems_b1,
      input   logic           ems_b2,
-     input   logic           ems_b3,
-     input   logic           ems_b4,
-     // BIOS
+      input   logic           ems_b3,
+      input   logic           ems_b4,
+      // UMB
+      input   logic           umb_enabled,
+      // BIOS
      input  logic    [2:0]  bios_protect_flag,
     // Wait mode
     input   logic           wait_count_clk_en,
@@ -71,9 +73,11 @@ module RAM (
     //
     // RAM Address Select (0x00000-0x9FFFF and 0xC0000-0xFFFFF).
     // A0000-BFFFF is reserved for video.
+    // C4000-CFFFF is optional UMB; C0000-C3FFF remains the EGA BIOS ROM.
     // D0000-DFFFF is reserved for EMS and only responds for a mapped bank.
     //
     assign ram_address_select_n = ~(enable_sdram && ~(address[19:17] == 3'b101) &&
+	                               (umb_enabled || (address[19:14] != 6'b110001 && address[19:14] != 6'b110010 && address[19:14] != 6'b110011)) &&
 	                               (~ems_page_frame || ems_bank_select));
 	 
 

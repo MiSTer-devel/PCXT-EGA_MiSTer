@@ -127,6 +127,8 @@ module CHIPSET #(
         // EMS
         input   logic           ems_enabled,
         input   logic   [1:0]   ems_address,
+        // UMB
+        input   logic           umb_enabled,
         // BIOS
         input  logic    [2:0]   bios_protect_flag,
         // MMC interface
@@ -459,6 +461,7 @@ module CHIPSET #(
         .ems_b2                             (ems_b2),
         .ems_b3                             (ems_b3),
         .ems_b4                             (ems_b4),
+        .umb_enabled                        (umb_enabled),
         .bios_protect_flag                  (bios_protect_flag),
         .wait_count_clk_en                  (wait_count_clk_en),
         .ram_read_wait_cycle                (ram_read_wait_cycle),

@@ -28,6 +28,9 @@
 `ifndef ENABLE_EMS
 `define ENABLE_EMS 0
 `endif
+`ifndef ENABLE_UMB
+`define ENABLE_UMB 0
+`endif
 
 module emu
     (
@@ -224,7 +227,8 @@ module emu
     localparam CONF_STR_ROM = "P1FC0,ROM,PCXT BIOS:;";
     localparam CONF_STR_CMS = (`ENABLE_CMS ? "P2OA,C/MS Audio,Enabled,Disabled;" : "");
     localparam CONF_STR_OPL2 = (`ENABLE_OPL2 ? "P2oAB,OPL2,Adlib 388h,SB FM 388h/228h, Disabled;" : "");
-    localparam CONF_STR_EMS = (`ENABLE_EMS ? "P3OB,Lo-tech 2MB EMS,Enabled,Disabled;P3-;" : "");
+    localparam CONF_STR_EMS = (`ENABLE_EMS ? "P3OB,2MB EMS D000-DFFF,Enabled,Disabled;P3-;" : "");
+    localparam CONF_STR_UMB = (`ENABLE_UMB ? "P3OC,UMB C400-CFFF,Enabled,Disabled;P3-;" : "");
 
     localparam CONF_STR = {
 		`CONF_STR_SYSTEM,
@@ -269,6 +273,7 @@ module emu
 		"P3,Hardware;",
 		"P3-;",
 		CONF_STR_EMS,
+		CONF_STR_UMB,
 		"P3ONO,Joystick 1, Analog, Digital, Disabled;",
 		"P3OPQ,Joystick 2, Analog, Digital, Disabled;",
 		"P3OR,Sync Joy to CPU Speed,No,Yes;",
@@ -935,6 +940,7 @@ module emu
 
     wire ems_enabled_sel = `ENABLE_EMS ? ~status[11] : 1'b0;
     wire [1:0] ems_address_sel = 2'b01; // Fixed D000 page frame avoids EGA and XT-IDE ROM conflicts.
+    wire umb_enabled_sel = `ENABLE_UMB ? ~status[12] : 1'b0;
 
     always @(posedge clk_chipset)
     begin
@@ -1050,6 +1056,7 @@ module emu
 		.sdram_udqm                         (SDRAM_DQMH),
 		.ems_enabled                        (ems_enabled_sel),
 		.ems_address                        (ems_address_sel),
+		.umb_enabled                        (umb_enabled_sel),
 		.bios_protect_flag                  (bios_protect_flag),
 		.use_mmc                            (use_mmc),
 		.spi_clk                            (spi_clk),
