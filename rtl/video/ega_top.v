@@ -94,6 +94,44 @@ module ega_top(
     localparam [3:0] EGA_STD_HSYNC_W_HI = 4'd10;
     localparam [3:0] EGA_STD_HSYNC_W_LO = 4'd5;
 
+    // Horizontal Pel Panning is applied as a variable delay on the dot stream
+    // against a fixed delay on everything else, so a shift of s dots to the
+    // left is a dot delay of (EGA_PAN_MAX - s). EGA_PAN_MAX is the widest shift
+    // the register can ask for: eight character dots, doubled when the
+    // sequencer halves the dot clock.
+    localparam integer EGA_PAN_MAX = 16;
+    // The 8 dot character modes can also ask for one dot width of shift to the
+    // *right* (panning values 8-15), so the delay line is two dots longer.
+    localparam integer EGA_PAN_STAGES = EGA_PAN_MAX + 2;
+
+    // Tap on the dot delay line, packed {pixel_valid, plane_index} per stage.
+    function [4:0] ega_pan_pick;
+        input [(5*EGA_PAN_STAGES)-1:0] pipe;
+        input [4:0]                    idx;   // 0 = one dot ago
+        begin
+            case (idx)
+                5'd0:  ega_pan_pick = pipe[4:0];
+                5'd1:  ega_pan_pick = pipe[9:5];
+                5'd2:  ega_pan_pick = pipe[14:10];
+                5'd3:  ega_pan_pick = pipe[19:15];
+                5'd4:  ega_pan_pick = pipe[24:20];
+                5'd5:  ega_pan_pick = pipe[29:25];
+                5'd6:  ega_pan_pick = pipe[34:30];
+                5'd7:  ega_pan_pick = pipe[39:35];
+                5'd8:  ega_pan_pick = pipe[44:40];
+                5'd9:  ega_pan_pick = pipe[49:45];
+                5'd10: ega_pan_pick = pipe[54:50];
+                5'd11: ega_pan_pick = pipe[59:55];
+                5'd12: ega_pan_pick = pipe[64:60];
+                5'd13: ega_pan_pick = pipe[69:65];
+                5'd14: ega_pan_pick = pipe[74:70];
+                5'd15: ega_pan_pick = pipe[79:75];
+                5'd16: ega_pan_pick = pipe[84:80];
+                default: ega_pan_pick = pipe[89:85];
+            endcase
+        end
+    endfunction
+
     // Dot clock selected by Miscellaneous Output bit 2, as on a real EGA:
     // 0 = 14.318181 MHz (CGA compatible modes), 1 = 16.257 MHz (350 line
     // modes and MDA compatible mode 7).
@@ -300,6 +338,7 @@ module ega_top(
     wire ega_chain2_read;
     wire [1:0] ega_mem_map_sel;
     wire [7:0] ega_attr_data_out;
+    wire [3:0] ega_attr_pixel_pan;
     wire [5:0] ega_red_compat;
     wire [5:0] ega_green_compat;
     wire [5:0] ega_blue_compat;
@@ -369,10 +408,116 @@ module ega_top(
     wire [1:0] ega_render_mode = !ega_graphics_mode_active ? 2'd0 :
                                   ega_compat_2bpp_mode ? 2'd2 : 2'd1;
     wire ega_display_enable = ega_display_enable_crtc;
-    reg [25:0] ega_display_enable_delay = 26'd0;
+    reg [39:0] ega_display_enable_delay = 40'd0;
     wire ega_display_enable_visible = ega_display_enable_delay[ega_visible_delay_a] |
                                       ega_display_enable_delay[ega_visible_delay_b];
-    wire ega_display_enable_render = ega_display_enable | ega_display_enable_visible;
+    // Pel panning displays the row starting a few dots in, so the pipeline has
+    // to keep producing dots for one character past the point where it used to
+    // stop - that is the extra character fetch a real EGA makes at the end of a
+    // panned line, and it is what 86Box renders as "hdisp + scrollcache".
+    wire ega_display_enable_tail = ega_display_enable_delay[ega_visible_delay_a + EGA_PAN_MAX] |
+                                   ega_display_enable_delay[ega_visible_delay_b + EGA_PAN_MAX];
+    wire ega_display_enable_render = ega_display_enable | ega_display_enable_visible |
+                                     ega_display_enable_tail;
+
+    // ------------------------------------------------------------ Pel Panning
+    // Attribute controller index 13h. 86Box (vid_ega.c) turns the register into
+    // a shift in dots as
+    //
+    //     scrollcache = (attrregs[0x13] & 0x0F);
+    //     if (scrollcache >= 8) scrollcache = 0; else scrollcache++;
+    //     if (seqregs[1] & 8)   scrollcache <<= 1;
+    //     x_add = (overscan_x >> 1) - scrollcache;
+    //
+    // and then hands one dot width back at the top of both renderers, in the 8
+    // dot character modes only ("compensate for 8dot scroll"). Net of the two,
+    // an 8 dot mode shifts left by exactly the register value and a 9 dot mode
+    // by the value plus one, with 8-15 meaning no shift - the classic EGA table
+    // where 8 is the aligned position in 9 dot text. The doubling for the
+    // halved dot clock is what makes a 320 wide mode pan one 320 wide pixel per
+    // step rather than half of one.
+    wire [4:0] ega_pan_scroll = (ega_attr_pixel_pan >= 4'd8) ? 5'd0
+                                                             : ({1'b0, ega_attr_pixel_pan} + 5'd1);
+    wire [5:0] ega_pan_scroll_dots = ega_dot_clock_div2_active ? {ega_pan_scroll, 1'b0}
+                                                               : {1'b0, ega_pan_scroll};
+    wire [5:0] ega_pan_compensate = ega_char_9dot_active ? 6'd0 :
+                                    (ega_dot_clock_div2_active ? 6'd2 : 6'd1);
+    // The delay that renders that shift, 0 to EGA_PAN_STAGES. Never negative:
+    // ega_pan_scroll_dots is at most EGA_PAN_MAX.
+    wire [4:0] ega_pan_delay_next = EGA_PAN_MAX + ega_pan_compensate - ega_pan_scroll_dots;
+
+    reg  [4:0] ega_pan_delay = EGA_PAN_MAX;
+    reg  [(5*EGA_PAN_STAGES)-1:0] ega_pan_pipe = {(5*EGA_PAN_STAGES){1'b0}};
+    reg  [EGA_PAN_MAX-1:0] ega_pan_de_pipe = {EGA_PAN_MAX{1'b0}};
+    reg  ega_display_enable_q = 1'b0;
+
+    wire [4:0] ega_pan_sample = {ega_pixel_valid, ega_plane_index};
+    wire [4:0] ega_pan_tap = (ega_pan_delay == 5'd0) ? ega_pan_sample
+                                                     : ega_pan_pick(ega_pan_pipe, ega_pan_delay - 5'd1);
+    wire [3:0] ega_plane_index_panned = ega_pan_tap[3:0];
+    wire       ega_pixel_valid_panned = ega_pan_tap[4];
+    // The window the attribute controller paints takes the fixed delay, so the
+    // dot it shows first is the one generated ega_pan_delay_next dots into the
+    // row, which is the shift asked for.
+    wire       ega_display_enable_panned = ega_pan_de_pipe[EGA_PAN_MAX-1];
+
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            ega_pan_delay <= EGA_PAN_MAX;
+            ega_pan_pipe <= {(5*EGA_PAN_STAGES){1'b0}};
+            ega_pan_de_pipe <= {EGA_PAN_MAX{1'b0}};
+            ega_display_enable_q <= 1'b0;
+        end else if (ce_pix) begin
+            ega_display_enable_q <= ega_display_enable;
+            // One latch per scanline, at the start of the line, the way the
+            // attribute controller reloads its panning counter. 86Box only
+            // recomputes scrollcache once a frame, which is enough for the
+            // scrolling case but would flatten the per scanline waves that were
+            // a stock EGA effect, so this follows the hardware rather than the
+            // emulator: a write during the active line lands on the next one,
+            // never halfway through the one being painted.
+            if (ega_display_enable & ~ega_display_enable_q)
+                ega_pan_delay <= ega_pan_delay_next;
+            ega_pan_pipe <= {ega_pan_pipe[(5*(EGA_PAN_STAGES-1))-1:0], ega_pan_sample};
+            ega_pan_de_pipe <= {ega_pan_de_pipe[EGA_PAN_MAX-2:0], ega_display_enable_visible};
+        end
+    end
+
+    // Delaying the dot stream by EGA_PAN_MAX would otherwise walk the picture
+    // that far to the right of HSYNC. Everything the CRTC hands to the scaler
+    // and to the analogue output takes the same delay, so the image keeps the
+    // horizontal position it had before panning existed. The internal users of
+    // these signals - the display activation state machine, the status register
+    // - stay on the undelayed copies, which is where they belong.
+    reg [EGA_PAN_MAX-1:0] ega_pan_hsync_pipe = {EGA_PAN_MAX{1'b0}};
+    reg [EGA_PAN_MAX-1:0] ega_pan_vsync_pipe = {EGA_PAN_MAX{1'b0}};
+    reg [EGA_PAN_MAX-1:0] ega_pan_hblank_pipe = {EGA_PAN_MAX{1'b1}};
+    reg [EGA_PAN_MAX-1:0] ega_pan_vblank_pipe = {EGA_PAN_MAX{1'b0}};
+    reg [EGA_PAN_MAX-1:0] ega_pan_vborder_pipe = {EGA_PAN_MAX{1'b0}};
+
+    wire ega_visible_vblank = ~ega_vertical_display_enable_crtc;
+    wire ega_hsync_out = ega_pan_hsync_pipe[EGA_PAN_MAX-1];
+    wire ega_vsync_out_l = ega_pan_vsync_pipe[EGA_PAN_MAX-1];
+    wire ega_hblank_out = ega_pan_hblank_pipe[EGA_PAN_MAX-1];
+    wire ega_vblank_out = ega_pan_vblank_pipe[EGA_PAN_MAX-1];
+    wire ega_vborder_out = ega_pan_vborder_pipe[EGA_PAN_MAX-1];
+
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            ega_pan_hsync_pipe <= {EGA_PAN_MAX{1'b0}};
+            ega_pan_vsync_pipe <= {EGA_PAN_MAX{1'b0}};
+            ega_pan_hblank_pipe <= {EGA_PAN_MAX{1'b1}};
+            ega_pan_vblank_pipe <= {EGA_PAN_MAX{1'b0}};
+            ega_pan_vborder_pipe <= {EGA_PAN_MAX{1'b0}};
+        end else if (ce_pix) begin
+            ega_pan_hsync_pipe <= {ega_pan_hsync_pipe[EGA_PAN_MAX-2:0], ega_hsync_int};
+            ega_pan_vsync_pipe <= {ega_pan_vsync_pipe[EGA_PAN_MAX-2:0], ega_vsync_l};
+            ega_pan_hblank_pipe <= {ega_pan_hblank_pipe[EGA_PAN_MAX-2:0], ega_hblank_crtc};
+            ega_pan_vblank_pipe <= {ega_pan_vblank_pipe[EGA_PAN_MAX-2:0], ega_visible_vblank};
+            ega_pan_vborder_pipe <= {ega_pan_vborder_pipe[EGA_PAN_MAX-2:0], ega_vblank_crtc};
+        end
+    end
+
     wire ega_blanking_active = ega_status_not_displaying_crtc;
     wire ega_status_vretrace_active = ega_status_vretrace_crtc;
 
@@ -548,7 +693,6 @@ module ega_top(
         .display_enable((ega_text_mode_active && !ega_splash_active) ? ega_display_enable_render : 1'b0),
         .dot_clock_div2(ega_dot_clock_div2_active),
         .char_9dot(ega_char_9dot_active),
-        .h_pixel_pan(4'd0),
         .blink_enable(ega_attr_blink_enable),
         .blink_state(ega_blink_state),
         .mono_attributes(ega_attr_mono_attributes),
@@ -591,14 +735,15 @@ module ega_top(
         .io_we(ega_io_we),
         .io_re(ega_io_re),
         .status_re(ega_status_read),
-        .plane_index(ega_plane_index),
-        .pixel_valid(ega_pixel_valid),
-        .display_enable(ega_display_enable_visible),
+        .plane_index(ega_plane_index_panned),
+        .pixel_valid(ega_pixel_valid_panned),
+        .display_enable(ega_display_enable_panned),
         .text_mode(~ega_graphics_mode_active),
         .blink_state(ega_blink_state),
         .blink_enable_out(ega_attr_blink_enable),
         .mono_attributes_out(ega_attr_mono_attributes),
         .line_graphics_enable_out(ega_attr_line_graphics_enable),
+        .pixel_pan_out(ega_attr_pixel_pan),
         .palette_64_mode(ega_misc_output_reg[7]),
         .color_out(ega_color_raw),
         .display_enable_out(ega_display_enable_raw),
@@ -665,7 +810,6 @@ module ega_top(
     wire ega_vsync_sd_l;
     wire ega_vblank_sd;
     wire ega_display_enable_sd;
-    wire ega_visible_vblank = ~ega_vertical_display_enable_crtc;
 
     // The line doubler needs an output enable at exactly twice the dot rate.
     // 2 x 16.257 MHz cannot be produced from the 28.636 MHz video clock, and
@@ -679,9 +823,9 @@ module ega_top(
         .ce_2x(ce_pix_2x),
         .scandouble_en(ega_scandouble_active),
         .pixel_in(ega_color_raw),
-        .hsync_in(ega_hsync_int),
-        .vsync_in(ega_vsync_l),
-        .vblank_in(ega_visible_vblank),
+        .hsync_in(ega_hsync_out),
+        .vsync_in(ega_vsync_out_l),
+        .vblank_in(ega_vblank_out),
         .display_enable_in(ega_display_enable_raw),
         .pixel_out(ega_dbl_color),
         .hsync_out(ega_dbl_hsync),
@@ -690,7 +834,7 @@ module ega_top(
         .display_enable_out(ega_display_enable_sd)
     );
 
-    wire ega_vsync = ~ega_vsync_l;
+    wire ega_vsync = ~ega_vsync_out_l;
     wire [5:0] ega_video_selected = ega_scandouble_active ? ega_dbl_color : ega_color_raw;
     wire ega_vblank_rise = ~ega_vblank_q & ega_visible_vblank;
     assign vga_dac_sample_index = vga_mode13_active ? vga_renderer_dac_index
@@ -775,7 +919,7 @@ module ega_top(
             bus_ior_l_q <= 1'b1;
             bus_aen_q <= 1'b0;
             ega_text_fetch_phase <= 5'd0;
-            ega_display_enable_delay <= 26'd0;
+            ega_display_enable_delay <= 40'd0;
         end else begin
             bus_a_q <= bus_a;
             bus_d_q <= bus_d;
@@ -789,7 +933,7 @@ module ega_top(
                     ega_text_fetch_phase <= ega_text_fetch_phase + 5'd1;
                 end
 
-                ega_display_enable_delay <= {ega_display_enable_delay[24:0],
+                ega_display_enable_delay <= {ega_display_enable_delay[38:0],
                                              ega_display_enable};
             end
 
@@ -825,7 +969,7 @@ module ega_top(
                 ega_vblank_crtc_q <= 1'b0;
                 ega_blink_counter <= 7'h00;
                 ega_text_fetch_phase <= 5'd0;
-                ega_display_enable_delay <= 26'd0;
+                ega_display_enable_delay <= 40'd0;
             end
 
             if (!ega_enabled) begin
@@ -896,12 +1040,12 @@ module ega_top(
                      : ega_dac_hit        ? vga_dac_sample_green : ega_green_compat;
     assign ega_blue  = vga_mode13_active ? vga_blue
                      : ega_dac_hit        ? vga_dac_sample_blue  : ega_blue_compat;
-    assign hsync = ega_enabled ? (vga_mode13_active ? vga_hsync : ega_hsync_int) : 1'b1;
+    assign hsync = ega_enabled ? (vga_mode13_active ? vga_hsync : ega_hsync_out) : 1'b1;
     assign dbl_hsync = ega_enabled ? (vga_mode13_active ? vga_hsync : ega_dbl_hsync) : 1'b1;
-    assign hblank = ega_enabled ? (vga_mode13_active ? vga_hblank : (ega_scandouble_active ? ~ega_display_enable_sd : ega_hblank_crtc)) : 1'b1;
+    assign hblank = ega_enabled ? (vga_mode13_active ? vga_hblank : (ega_scandouble_active ? ~ega_display_enable_sd : ega_hblank_out)) : 1'b1;
     assign vsync = ega_enabled ? (vga_mode13_active ? vga_vsync : (ega_scandouble_active ? ~ega_vsync_sd_l : ega_vsync)) : 1'b1;
-    assign vblank = ega_enabled ? (vga_mode13_active ? vga_vblank : (ega_scandouble_active ? ega_vblank_sd : ega_visible_vblank)) : 1'b1;
-    assign vblank_border = ega_enabled ? (vga_mode13_active ? vga_vblank : (ega_scandouble_active ? ega_vblank_sd : ega_vblank_crtc)) : 1'b1;
+    assign vblank = ega_enabled ? (vga_mode13_active ? vga_vblank : (ega_scandouble_active ? ega_vblank_sd : ega_vblank_out)) : 1'b1;
+    assign vblank_border = ega_enabled ? (vga_mode13_active ? vga_vblank : (ega_scandouble_active ? ega_vblank_sd : ega_vborder_out)) : 1'b1;
     assign std_hsyncwidth = ega_enabled
                           ? (ega_hsync_width_crtc == (ega_dot_clock_div2_active ? EGA_STD_HSYNC_W_LO : EGA_STD_HSYNC_W_HI))
                           : 1'b0;

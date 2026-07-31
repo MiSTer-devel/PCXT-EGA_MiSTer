@@ -25,6 +25,7 @@ module ega_attrib_ctrl (
     output wire        blink_enable_out,
     output wire        mono_attributes_out,
     output wire        line_graphics_enable_out,
+    output wire [3:0]  pixel_pan_out,
     output reg  [5:0]  color_out,
     output reg         display_enable_out,
     output reg         video_enable_out
@@ -47,7 +48,14 @@ module ega_attrib_ctrl (
     reg       attr_write_q = 1'b0;
     reg       status_re_q = 1'b0;
 
-    wire attr_addr_cs = (io_addr == ATTR_ADDR_PORT0) || (io_addr == ATTR_ADDR_PORT1);
+    // A write reaches the attribute controller at either address. The card does
+    // not decode A0 for this register - 3C1h is only "the read port" by
+    // convention, and 86Box (vid_ega.c, ega_out) answers writes at 3C0h, 3C1h,
+    // 2C0h and 2C1h alike. Software does rely on it: EGA test code that loads
+    // the index at 3C0h and then pushes the value at 3C1h works on real
+    // hardware, and dropping that write leaves the register half programmed.
+    wire attr_addr_cs = (io_addr == ATTR_ADDR_PORT0) || (io_addr == ATTR_ADDR_PORT1) ||
+                        (io_addr == ATTR_READ_PORT0) || (io_addr == ATTR_READ_PORT1);
     wire attr_read_cs = (io_addr == ATTR_READ_PORT0) || (io_addr == ATTR_READ_PORT1);
     wire attr_write_pulse = (io_we && attr_addr_cs) && !attr_write_q;
     wire status_re_pulse = status_re && !status_re_q;
@@ -69,6 +77,8 @@ module ega_attrib_ctrl (
     assign blink_enable_out = attr_blink_enable;
     assign mono_attributes_out = attr_mono_attributes;
     assign line_graphics_enable_out = attr_line_graphics_enable;
+    // Horizontal Pel Panning (index 13h), for the renderer to act on.
+    assign pixel_pan_out = pixel_panning_reg[3:0];
 
     integer palette_index;
 

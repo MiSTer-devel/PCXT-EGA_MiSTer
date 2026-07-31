@@ -1,0 +1,457 @@
+//============================================================================
+//
+//  Horizontal Pel Panning (attribute controller index 13h) against 86Box.
+//
+//  86Box turns the register into a shift in dots in vid_ega.c:
+//
+//      scrollcache = (attrregs[0x13] & 0x0F);
+//      if (scrollcache >= 8) scrollcache = 0; else scrollcache++;
+//      if (seqregs[1] & 8)   scrollcache <<= 1;
+//      x_add = (overscan_x >> 1) - scrollcache;
+//
+//  and gives one dot width back at the top of both renderers in the 8 dot
+//  character modes ("compensate for 8dot scroll"). Net of the two:
+//
+//      8 dot, full dot clock    pan 0-7  -> 0..7 dots left, 8-15 -> 1 right
+//      8 dot, halved dot clock  pan 0-7  -> 0..14 even,     8-15 -> 2 right
+//      9 dot                    pan 0-7  -> 1..8 dots left, 8-15 -> aligned
+//
+//  The bench puts a single lit dot a known distance into every row, sweeps the
+//  register and checks where that dot lands relative to the start of the
+//  displayed window. It also checks that a solid row still fills the window at
+//  every panning value, which only holds if the extra character a panned line
+//  needs is actually fetched, and that the window itself does not move against
+//  HSYNC - panning must shift the picture, not the raster.
+//
+//============================================================================
+
+`timescale 1ns/1ps
+`default_nettype wire
+
+module ega_pel_pan_tb;
+
+    reg clk = 1'b0;
+    always #17.462 clk = ~clk;   // 28.636363 MHz video clock
+
+    reg reset = 1'b1;
+
+    reg [14:0] bus_a = 15'h0000;
+    reg [7:0]  bus_d = 8'h00;
+    reg        bus_ior_l = 1'b1;
+    reg        bus_iow_l = 1'b1;
+    reg        bus_aen = 1'b0;
+    reg        cpu_mem_select = 1'b0;
+    reg        cpu_mem_write = 1'b0;
+
+    wire [15:0] fetch_addr;
+    wire        fetch_en;
+    wire [15:0] text_cell_addr;
+    wire [15:0] text_font_addr;
+    wire        text_fetch_en;
+
+    reg [7:0] plane0 = 8'h00, plane1 = 8'h00, plane2 = 8'h00, plane3 = 8'h00;
+    reg       fetch_valid = 1'b0;
+    reg [7:0] text_char = 8'h00, text_attr = 8'h00, text_glyph = 8'h00;
+    reg       text_valid = 1'b0;
+
+    wire hsync, hblank, vsync, vblank;
+    wire de_o;
+    wire [5:0] red, green, blue;
+
+    integer errors = 0;
+    integer checks = 0;
+
+    // --- VRAM model, same two clock latency as ega_vram_bram_frontend --------
+    reg [7:0]  vram_p0 [0:65535];
+    reg [15:0] fetch_addr_q;
+    reg        fetch_en_q;
+    reg        text_fetch_en_q;
+
+    integer i;
+
+    always @(posedge clk) begin
+        fetch_en_q   <= fetch_en;
+        fetch_addr_q <= fetch_addr;
+        fetch_valid  <= fetch_en_q;
+        plane0       <= vram_p0[fetch_addr_q];
+        plane1       <= 8'h00;
+        plane2       <= 8'h00;
+        plane3       <= 8'h00;
+    end
+
+    always @(posedge clk) begin
+        text_fetch_en_q <= text_fetch_en;
+        text_valid      <= text_fetch_en_q;
+        text_char       <= 8'h00;
+        text_attr       <= 8'h0F;
+        // only the third cell of a row carries a lit dot, in its leftmost column
+        text_glyph      <= (text_cell_addr[2:0] == 3'd2) ? 8'h80 : 8'h00;
+    end
+
+    ega_top dut (
+        .clk(clk),
+        .reset(reset),
+        .bus_a(bus_a),
+        .bus_ior_l(bus_ior_l),
+        .bus_iow_l(bus_iow_l),
+        .bus_d(bus_d),
+        .bus_out(),
+        .bus_dir(),
+        .bus_aen(bus_aen),
+        .ega_fetch_addr(fetch_addr),
+        .ega_fetch_en(fetch_en),
+        .ega_plane0_data(plane0),
+        .ega_plane1_data(plane1),
+        .ega_plane2_data(plane2),
+        .ega_plane3_data(plane3),
+        .ega_fetch_data_valid(fetch_valid),
+        .ega_text_cell_addr(text_cell_addr),
+        .ega_text_font_addr(text_font_addr),
+        .ega_text_fetch_en(text_fetch_en),
+        .ega_text_char(text_char),
+        .ega_text_attr(text_attr),
+        .ega_text_glyph(text_glyph),
+        .ega_text_data_valid(text_valid),
+        .vga_framebuffer_addr(),
+        .vga_framebuffer_read_en(),
+        .vga_framebuffer_pixel(8'h00),
+        .vga_framebuffer_data_valid(1'b0),
+        .cpu_mem_select(cpu_mem_select),
+        .cpu_mem_write(cpu_mem_write),
+        .ega_cfg_toggle(),
+        .ega_plane_write_mask_out(),
+        .ega_odd_even_mode_out(),
+        .ega_cpu_access_slot_out(),
+        .ega_chain2_write_out(),
+        .ega_chain2_read_out(),
+        .ega_extended_memory_out(),
+        .ega_mem_map_sel_out(),
+        .ega_page_select_out(),
+        .ega_write_mode_out(),
+        .ega_read_mode_out(),
+        .ega_read_plane_sel_out(),
+        .ega_color_compare_out(),
+        .ega_color_dont_care_out(),
+        .ega_bit_mask_out(),
+        .ega_set_reset_out(),
+        .ega_enable_set_reset_out(),
+        .ega_rop_select_out(),
+        .ega_rotate_count_out(),
+        .ega_blink_counter_out(),
+        .ega_blink_state_out(),
+        .hsync(hsync),
+        .hblank(hblank),
+        .dbl_hsync(),
+        .vsync(vsync),
+        .vblank(vblank),
+        .vblank_border(),
+        .std_hsyncwidth(),
+        .de_o(de_o),
+        .ega_red(red),
+        .ega_green(green),
+        .ega_blue(blue),
+        .ega_display_sel_out(),
+        .ega_dot_toggle_out(),
+        .ega_dot_clock_sel_out(),
+        .ega_scandouble_active_out(),
+        .splashscreen(1'b0),
+        .thin_font(1'b0),
+        .scandouble_en(1'b0),
+        .ega_enabled(1'b1),
+        .vga_enabled(1'b0),
+        .vga_mode13_set(1'b0),
+        .vga_mode13_clear(1'b0),
+        .vga_mode13_active_out(),
+        .crt_h_offset(4'd0),
+        .crt_v_offset(3'd0),
+        .vsync_width_osd(3'd0),
+        .hsync_width_osd(3'd0)
+    );
+
+    // ---------------------------------------------------------------- I/O ---
+    task io_write(input [14:0] a, input [7:0] d);
+        begin
+            @(posedge clk);
+            bus_a <= a; bus_d <= d; bus_aen <= 1'b0;
+            repeat (4) @(posedge clk);
+            bus_iow_l <= 1'b0;
+            repeat (8) @(posedge clk);
+            bus_iow_l <= 1'b1;
+            repeat (6) @(posedge clk);
+        end
+    endtask
+
+    task crtc_write(input [7:0] idx, input [7:0] d);
+        begin io_write(15'h03D4, idx); io_write(15'h03D5, d); end
+    endtask
+
+    task seq_write(input [7:0] idx, input [7:0] d);
+        begin io_write(15'h03C4, idx); io_write(15'h03C5, d); end
+    endtask
+
+    task gfx_write(input [7:0] idx, input [7:0] d);
+        begin io_write(15'h03CE, idx); io_write(15'h03CF, d); end
+    endtask
+
+    task attr_reset_ff;
+        begin
+            // reading Input Status 1 resets the address/data flip flop
+            @(posedge clk);
+            bus_a <= 15'h03DA; bus_ior_l <= 1'b0;
+            repeat (8) @(posedge clk);
+            bus_ior_l <= 1'b1;
+            repeat (6) @(posedge clk);
+        end
+    endtask
+
+    task attr_write(input [7:0] idx, input [7:0] d);
+        begin
+            attr_reset_ff;
+            io_write(15'h03C0, idx);
+            io_write(15'h03C0, d);
+            io_write(15'h03C0, 8'h20);   // back to normal palette operation
+        end
+    endtask
+
+    // What EGA software actually does: index at 3C0h, value at 3C1h. The card
+    // does not decode A0 for this register, so the write has to land.
+    task attr_write_via_3c1(input [7:0] idx, input [7:0] d);
+        begin
+            attr_reset_ff;
+            io_write(15'h03C0, idx | 8'h20);
+            io_write(15'h03C1, d);
+        end
+    endtask
+
+    // ------------------------------------------------------- line inspection -
+    integer dot_count = 0;
+    integer first_lit = -1;
+    integer lit_count = 0;
+    integer de_start = 0;
+    reg     prev_de = 1'b0;
+    reg     prev_hsync = 1'b0;
+
+    wire ce_pix = dut.ce_pix;
+    wire lit = (red != 6'h00) || (green != 6'h00) || (blue != 6'h00);
+
+    always @(posedge clk) begin
+        if (ce_pix) begin
+            if (hsync && !prev_hsync) dot_count <= 0;
+            else                      dot_count <= dot_count + 1;
+            prev_hsync <= hsync;
+
+            if (de_o && !prev_de) de_start <= dot_count;
+            prev_de <= de_o;
+
+            if (de_o && lit) begin
+                if (first_lit < 0) first_lit <= dot_count;
+                lit_count <= lit_count + 1;
+            end
+        end
+    end
+
+    // Sample the second displayed line of a frame, so the measurement never
+    // lands on the first line of a freshly reprogrammed mode.
+    task measure(output integer lit_at, output integer lit_dots, output integer win);
+        begin
+            @(negedge vblank);
+            wait (de_o == 1'b1);
+            wait (de_o == 1'b0);
+            first_lit = -1; lit_count = 0;
+            wait (de_o == 1'b1);
+            wait (de_o == 1'b0);
+            lit_at   = first_lit;
+            lit_dots = lit_count;
+            win      = de_start;
+        end
+    endtask
+
+    integer lit_at, lit_dots, win;
+    integer pan;
+    integer probe_ref;
+    integer got_shift;
+
+    // Everything is measured against where the probe sits at pan 0, so the test
+    // states what panning does and stays silent about the fixed pipeline
+    // alignment of each mode, which is tuned elsewhere and is not its business.
+    task capture_reference;
+        begin
+            attr_write(8'h13, 8'h00);
+            measure(lit_at, lit_dots, win);
+            probe_ref  = lit_at - win;
+            window_ref = win;
+        end
+    endtask
+
+    task check_shift(input [255:0] label, input integer pan_value,
+                     input integer expected);
+        begin
+            attr_write(8'h13, pan_value[7:0]);
+            measure(lit_at, lit_dots, win);
+            got_shift = probe_ref - (lit_at - win);
+            checks = checks + 1;
+            if (got_shift !== expected) begin
+                errors = errors + 1;
+                $display("FAIL %0s pan=%0d: shifted %0d dots from pan 0, expected %0d",
+                         label, pan_value, got_shift, expected);
+            end
+        end
+    endtask
+
+    task check_filled(input [255:0] label, input integer pan_value,
+                      input integer expected_dots);
+        begin
+            attr_write(8'h13, pan_value[7:0]);
+            measure(lit_at, lit_dots, win);
+            checks = checks + 1;
+            if (lit_dots !== expected_dots) begin
+                errors = errors + 1;
+                $display("FAIL %0s pan=%0d: %0d lit dots in the window, expected %0d",
+                         label, pan_value, lit_dots, expected_dots);
+            end
+        end
+    endtask
+
+    integer window_ref;
+
+    task check_window_fixed(input [255:0] label);
+        begin
+            checks = checks + 1;
+            if (win !== window_ref) begin
+                errors = errors + 1;
+                $display("FAIL %0s: display window moved to dot %0d, was %0d",
+                         label, win, window_ref);
+            end
+        end
+    endtask
+
+    // --------------------------------------------------------------- probe --
+    task probe_pattern;
+        begin
+            for (i = 0; i < 256; i = i + 1) vram_p0[i] = 8'h00;
+            // third character of every row (rows are 8 characters apart here)
+            for (i = 2; i < 256; i = i + 8) vram_p0[i] = 8'h80;
+        end
+    endtask
+
+    task solid_pattern;
+        begin
+            for (i = 0; i < 256; i = i + 1) vram_p0[i] = 8'hFF;
+        end
+    endtask
+
+    // ---------------------------------------------------------------- main --
+    initial begin
+        for (i = 0; i < 65536; i = i + 1) vram_p0[i] = 8'h00;
+        probe_pattern;
+
+        repeat (20) @(posedge clk);
+        reset <= 1'b0;
+        repeat (20) @(posedge clk);
+
+        io_write(15'h03C2, 8'h63);     // Miscellaneous Output: colour, 14.318 MHz
+
+        seq_write(8'h01, 8'h09);       // 8 dot characters, halved dot clock
+        seq_write(8'h04, 8'h06);
+
+        gfx_write(8'h05, 8'h00);
+        gfx_write(8'h06, 8'h05);       // graphics mode, A000 map
+
+        crtc_write(8'h00, 8'd13);      // horizontal total
+        crtc_write(8'h01, 8'd8);       // horizontal displayed
+        crtc_write(8'h02, 8'd9);
+        crtc_write(8'h03, 8'd10);
+        crtc_write(8'h04, 8'd10);
+        crtc_write(8'h05, 8'h03);
+        crtc_write(8'h06, 8'd10);      // vertical total
+        crtc_write(8'h07, 8'h00);
+        crtc_write(8'h08, 8'h00);
+        crtc_write(8'h09, 8'h00);
+        crtc_write(8'h0C, 8'h00);
+        crtc_write(8'h0D, 8'h00);
+        crtc_write(8'h10, 8'd7);
+        crtc_write(8'h12, 8'd5);       // vertical display end
+        crtc_write(8'h13, 8'd4);       // offset: 8 addresses per row
+        crtc_write(8'h17, 8'hE3);
+        crtc_write(8'h15, 8'd6);
+        crtc_write(8'h16, 8'd9);
+
+        attr_write(8'h00, 8'h00);      // palette 0 black, 1 bright white
+        attr_write(8'h01, 8'h3F);
+        attr_write(8'h10, 8'h01);      // graphics mode
+        attr_write(8'h11, 8'h00);      // black overscan, so only pixels light up
+        attr_write(8'h12, 8'h0F);
+        attr_write(8'h13, 8'h00);
+
+        cpu_mem_select <= 1'b1; cpu_mem_write <= 1'b1;
+        repeat (4) @(posedge clk);
+        cpu_mem_select <= 1'b0; cpu_mem_write <= 1'b0;
+
+        repeat (8) @(negedge vblank);
+
+        // --- graphics, 8 dot characters, halved dot clock (mode 0Dh) --------
+        // Each step is one 320 wide pixel, which is what makes a program that
+        // scrolls a byte at a time plus a panning value scroll smoothly.
+        capture_reference;
+        for (pan = 0; pan < 16; pan = pan + 1)
+            check_shift("gfx 320", pan, (pan < 8) ? (2 * pan) : -2);
+        check_window_fixed("gfx 320");
+
+        // A panned line has to fetch one character more than it displays, or
+        // the dots the shift uncovers on the right come out blank.
+        solid_pattern;
+        for (pan = 0; pan < 16; pan = pan + 1)
+            check_filled("gfx 320 solid", pan, (pan < 8) ? 144 : 142);
+        probe_pattern;
+
+        // --- graphics, 8 dot characters, full dot clock (mode 10h) ----------
+        seq_write(8'h01, 8'h01);
+        repeat (4) @(negedge vblank);
+        capture_reference;
+        for (pan = 0; pan < 16; pan = pan + 1)
+            check_shift("gfx 640", pan, (pan < 8) ? pan : -1);
+        check_window_fixed("gfx 640");
+
+        // --- text, 9 dot characters (mode 03h/07h) --------------------------
+        // No "compensate for 8dot scroll" here, so the aligned position is pan
+        // 8 - the value the BIOS writes for mode 7 - and pan 0 is one dot left.
+        seq_write(8'h01, 8'h00);
+        gfx_write(8'h06, 8'h04);
+        attr_write(8'h10, 8'h00);
+        repeat (4) @(negedge vblank);
+        capture_reference;
+        for (pan = 0; pan < 16; pan = pan + 1)
+            check_shift("text 9 dot", pan, (pan < 8) ? pan : -1);
+        check_window_fixed("text 9 dot");
+
+        // --- the same sweep, but programmed the way software does it --------
+        seq_write(8'h01, 8'h09);
+        gfx_write(8'h06, 8'h05);
+        attr_write(8'h10, 8'h01);
+        repeat (4) @(negedge vblank);
+        capture_reference;
+        for (pan = 0; pan < 16; pan = pan + 1) begin
+            attr_write_via_3c1(8'h13, pan[7:0]);
+            measure(lit_at, lit_dots, win);
+            got_shift = probe_ref - (lit_at - win);
+            checks = checks + 1;
+            if (got_shift !== ((pan < 8) ? (2 * pan) : -2)) begin
+                errors = errors + 1;
+                $display("FAIL 3C1h write pan=%0d: shifted %0d dots, expected %0d",
+                         pan, got_shift, (pan < 8) ? (2 * pan) : -2);
+            end
+        end
+
+        $display("");
+        $display("%0d checks, %0d failed", checks, errors);
+        $display("RESULT: %0s", (errors == 0) ? "PASS" : "FAIL");
+        $finish;
+    end
+
+    initial begin
+        #60_000_000;
+        $display("RESULT: FAIL (timeout)");
+        $finish;
+    end
+
+endmodule
