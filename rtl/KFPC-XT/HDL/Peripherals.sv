@@ -245,7 +245,13 @@ module PERIPHERALS #(
     wire    lpt_chip_select         = (iorq && ~address_enable_n && address[15:1] == (16'h0378 >> 1)); // 0x378 ... 0x379
 	 wire    lpt_ctrl_select         = (iorq && ~address_enable_n && address[15:0] == 16'h037A); // 0x37A
     wire    xtctl_chip_select       = (iorq && ~address_enable_n && address[15:0] == 16'h8888);
-    wire    rtc_chip_select         = (iorq && ~address_enable_n && address[15:1] == (16'h02C0 >> 1)); // 0x2C0 .. 0x2C1
+    // 0x2C0 .. 0x2CF is claimed by the EGA core as an undocumented mirror of
+    // 0x3C0 .. 0x3CF (attribute/sequencer/graphics controller index-data
+    // pairs), so the RTC/CMOS device (used for the x86_launcher AppId, among
+    // other things) can't live there without every index write also toggling
+    // Palette Address Source and blanking the display. Moved to 0x340 .. 0x341,
+    // matching one of the standard base addresses of a real MM58167 RTC card.
+    wire    rtc_chip_select         = (iorq && ~address_enable_n && address[15:1] == (16'h0340 >> 1)); // 0x340 .. 0x341
 
     wire    [3:0] ems_page_address  = (ems_address == 2'b00) ? 4'b1100 : (ems_address == 2'b01) ? 4'b1101 : 4'b1110;
     wire    ems_chip_select         = `ENABLE_EMS ? (iorq && ~address_enable_n && ems_enabled && ({address[15:2], 2'd0} == 16'h0260)) : 1'b0;          // 260h..263h
