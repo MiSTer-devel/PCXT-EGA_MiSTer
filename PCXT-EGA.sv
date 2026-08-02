@@ -618,10 +618,34 @@ module emu
     reg        bios_write_n;
     reg [7:0]  bios_write_wait_cnt;
     reg        bios_write_byte_cnt;
-    reg        ega_bios_loaded;
+    wire       ega_bios_loaded;
+    wire       ega_bios_write_protect;
+    wire [1:0] ega_video_switches;
     wire select_pcxt  = (ioctl_index[5:0] == 0) && (ioctl_addr[24:16] == 9'b000000000);
     wire select_xtide = ioctl_index == 2;
     wire select_ega_bios = (ioctl_index[5:0] == 3) && (ioctl_addr[24:16] == 9'b000000000);
+
+    // File identity, rather than the current address, defines the lifetime of
+    // an upload.  ioctl_addr is not guaranteed to have the new file's first
+    // address until its first data beat arrives.
+    wire ega_bios_download_active = ioctl_download && (ioctl_index[5:0] == 6'd3);
+    wire ega_bios_write_complete = (bios_load_state == 4'h04) &&
+                                   bios_write_byte_cnt && select_ega_bios;
+
+    // The loader returns to state 01 between every 16-bit word.  Treating that
+    // state as the start of a new EGA download cleared the presence flag again
+    // after every word (and once more at end-of-file), so the XT motherboard
+    // switches continued to advertise CGA even though an EGA ROM was present.
+    ega_bios_loaded_latch ega_bios_presence (
+        .clock              (clk_chipset),
+        .reset              (reset_sdram),
+        .sdram_initialized  (initilized_sdram),
+        .download_active    (ega_bios_download_active),
+        .write_complete     (ega_bios_write_complete),
+        .loaded             (ega_bios_loaded),
+        .write_protect      (ega_bios_write_protect),
+        .video_switches     (ega_video_switches)
+    );
 
     wire [19:0] bios_access_address_wire = select_pcxt  ? { 4'b1111, ioctl_addr[15:0]} :
          select_xtide ? { 6'b111011, ioctl_addr[13:0]} :
@@ -641,7 +665,6 @@ module emu
             bios_write_n        <= 1'b1;
             bios_write_wait_cnt <= 'h0;
             bios_write_byte_cnt <= 1'h0;
-            ega_bios_loaded     <= 1'b0;
             ioctl_wait          <= 1'b1;
             bios_load_state     <= 4'h00;
         end
@@ -654,7 +677,6 @@ module emu
             bios_write_n        <= 1'b1;
             bios_write_wait_cnt <= 'h0;
             bios_write_byte_cnt <= 1'h0;
-            ega_bios_loaded     <= 1'b0;
             ioctl_wait          <= 1'b1;
             bios_load_state     <= 4'h00;
         end
@@ -663,13 +685,12 @@ module emu
             casez (bios_load_state)
                 4'h00:
                 begin
-                    bios_protect_flag   <= {ega_bios_loaded, ~status[31:30]};  // ega/f000/ec00 protection
+                    bios_protect_flag   <= {ega_bios_write_protect, ~status[31:30]};  // ega/f000/ec00 protection
                     bios_access_address <= 20'hFFFFF;
                     bios_write_data     <= 16'hFFFF;
                     bios_write_n        <= 1'b1;
                     bios_write_wait_cnt <= 'h0;
                     bios_write_byte_cnt <= 1'h0;
-                    ega_bios_loaded     <= ega_bios_loaded;
                     if (~ioctl_download)
                     begin
                         bios_access_request <= 1'b0;
@@ -691,7 +712,6 @@ module emu
                     bios_protect_flag   <= 3'b000;
                     bios_access_request <= 1'b1;
                     bios_write_byte_cnt <= 1'h0;
-                    ega_bios_loaded     <= select_ega_bios ? 1'b0 : ega_bios_loaded;
                     if (~ioctl_download)
                     begin
                         bios_access_address <= 20'hFFFFF;
@@ -766,7 +786,6 @@ module emu
                     bios_write_n        <= 1'b1;
                     bios_write_wait_cnt <= 'h0;
                     bios_write_byte_cnt <= ~bios_write_byte_cnt;
-                    ega_bios_loaded     <= (bios_write_byte_cnt == 1'b1 && select_ega_bios) ? 1'b1 : ega_bios_loaded;
                     ioctl_wait          <= 1'b1;
                     if (bios_write_byte_cnt == 1'b0)
                         bios_load_state     <= 4'h02;
@@ -775,7 +794,7 @@ module emu
                 end
                 default:
                 begin
-                    bios_protect_flag   <= {ega_bios_loaded, 2'b11};
+                    bios_protect_flag   <= {ega_bios_write_protect, 2'b11};
                     bios_access_request <= 1'b0;
                     bios_access_address <= 20'hFFFFF;
                     bios_write_data     <= 16'hFFFF;
@@ -932,7 +951,7 @@ module emu
     // ROM" (EGA), 2'b10 means CGA 80x25. Loading the EGA BIOS is what installs the
     // card, so track it: otherwise the equipment word claims CGA and software that
     // trusts it, such as Titus The Fox, picks the CGA path and renders nothing.
-    assign  sw_base = ega_bios_loaded ? 6'b001101 : 6'b101101;
+    assign  sw_base = {ega_video_switches, 4'b1101};
     assign  sw_floppy = fdd_present[1] ? 2'b01 : 2'b00;
     assign  sw = {sw_floppy, sw_base}; // DIP switches (video adapter and floppy count)
     assign  port_c_in[3:0] = port_b_out[3] ? sw[7:4] : sw[3:0];
