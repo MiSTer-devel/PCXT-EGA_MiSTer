@@ -48,7 +48,41 @@ module ega_io_stretch
         // 8 chipset clocks = 160 ns = 4.6 video clocks presented high.
         // Both clear the far side's worst case with margin.
         parameter int MIN_LOW_TICKS  = 14,
-        parameter int MIN_HIGH_TICKS = 8
+        parameter int MIN_HIGH_TICKS = 8,
+        // Setup: how long address and data are presented, strobe still high,
+        // before the write strobe is asserted. This was one chipset clock,
+        // 20 ns, because the capture and the state change happened on the
+        // same edge and only the registered output added a clock. 20 ns is
+        // less than one 34.9 ns video clock, so on the far side the strobe
+        // could land in the same sample as the data - or ahead of some of
+        // it, since every bit crosses through its own synchroniser. The
+        // two-identical-samples qualifier in ega_top then accepted a value
+        // that was still half the previous write, and the card took one
+        // write, exactly once, with the wrong byte in it.
+        //
+        // 6 chipset clocks = 120 ns covers two video clock samples plus a
+        // full period of phase uncertainty, which is what the qualifier
+        // needs to have settled on the real value before it sees the strobe.
+        parameter int MIN_SETUP_TICKS = 6,
+        // Read return: how long the CPU is held after a read has been
+        // presented to the video domain, so the answer is on internal_data_bus
+        // before the cycle ends.
+        //
+        // Reads had no completion signal at all. access_ready held the CPU
+        // while a posted write drained, then went high the instant the bus was
+        // free - which is not the same thing as the card having answered. The
+        // round trip is two synchroniser stages out at 28.636 MHz, the
+        // two-identical-samples qualifier in ega_top, the decode, and two
+        // stages back at 50 MHz: measured at five to six chipset clocks from
+        // the presented strobe. All the CPU ever got was io_settle_ticks, a
+        // fixed four-clock floor in Chipset.sv that starts counting from the
+        // CPU's own strobe rather than from when the read reached the card, so
+        // a read issued behind a draining write lost even that.
+        //
+        // 12 chipset clocks = 240 ns covers the measured trip with margin, and
+        // the counter starts when the read is actually presented, so a read
+        // chasing a write waits from the right moment.
+        parameter int READ_RETURN_TICKS = 12
     )
     (
         input   logic           clock,
@@ -70,6 +104,7 @@ module ega_io_stretch
 
     typedef enum logic [1:0] {
         IDLE,
+        STRETCH_SETUP,
         STRETCH_LOW,
         STRETCH_HIGH
     } state_t;
@@ -107,8 +142,26 @@ module ega_io_stretch
                         video_data <= write_data;
                     if (cpu_write & ~strobe_seen) begin
                         strobe_seen <= 1'b1;
-                        ticks       <= MIN_LOW_TICKS[4:0];
-                        state       <= STRETCH_LOW;
+                        ticks       <= MIN_SETUP_TICKS[4:0];
+                        state       <= STRETCH_SETUP;
+                    end
+                end
+
+                STRETCH_SETUP: begin
+                    // Address and data are presented and the strobe is still
+                    // high. Keep tracking the live bus while the CPU is still
+                    // driving its own assertion, exactly as STRETCH_LOW does,
+                    // so nothing changes at the speeds where the real cycle is
+                    // longer than everything here.
+                    if (original_active) begin
+                        video_address <= address;
+                        video_data    <= write_data;
+                    end
+                    if (ticks != 5'd0)
+                        ticks <= ticks - 5'd1;
+                    else begin
+                        ticks <= MIN_LOW_TICKS[4:0];
+                        state <= STRETCH_LOW;
                     end
                 end
 
@@ -158,6 +211,37 @@ module ega_io_stretch
     // original write never stalls on its own stretch.
     wire    new_write_pending = cpu_write & ~strobe_seen;
 
-    assign  access_ready = (state == IDLE) | ~(new_write_pending | cpu_read);
+    // Read completion. The counter is armed the moment the read is actually
+    // presented to the video domain - which is when state reaches IDLE, since
+    // video_io_read_n is masked until then - and not when the CPU raised its
+    // strobe. That distinction is the whole point: a read issued behind a
+    // draining write is presented late, and it has to be given the return trip
+    // measured from there.
+    logic           read_presented;
+    logic   [4:0]   read_ticks;
+
+    always_ff @(posedge clock, posedge reset) begin
+        if (reset) begin
+            read_presented <= 1'b0;
+            read_ticks     <= 5'd0;
+        end
+        else if (io_read_n) begin
+            read_presented <= 1'b0;
+            read_ticks     <= READ_RETURN_TICKS[4:0];
+        end
+        else if (~read_presented) begin
+            if (state == IDLE) begin
+                read_presented <= 1'b1;
+                read_ticks     <= READ_RETURN_TICKS[4:0];
+            end
+        end
+        else if (read_ticks != 5'd0)
+            read_ticks <= read_ticks - 5'd1;
+    end
+
+    wire    read_incomplete = cpu_read & (~read_presented | (read_ticks != 5'd0));
+
+    assign  access_ready = ((state == IDLE) | ~(new_write_pending | cpu_read))
+                         & ~read_incomplete;
 
 endmodule
