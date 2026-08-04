@@ -1,0 +1,2306 @@
+<!doctype html>
+<html lang="en" data-theme="dark"><head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Technical report for the IBM PC/XT core for MiSTer FPGA">
+  <title>PCXT for MiSTer FPGA · Technical report</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080b10;
+      --bg-elevated: #101722;
+      --bg-soft: #151e2b;
+      --panel: rgba(18, 27, 39, 0.88);
+      --panel-strong: #172231;
+      --line: rgba(169, 195, 218, 0.18);
+      --line-strong: rgba(169, 195, 218, 0.34);
+      --text: #f0f5f8;
+      --muted: #a8b7c5;
+      --subtle: #738699;
+      --amber: #ffbf47;
+      --amber-soft: rgba(255, 191, 71, 0.12);
+      --cyan: #55d6e8;
+      --cyan-soft: rgba(85, 214, 232, 0.12);
+      --green: #74db9b;
+      --green-soft: rgba(116, 219, 155, 0.12);
+      --red: #ff7f88;
+      --red-soft: rgba(255, 127, 136, 0.12);
+      --shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+      --radius: 20px;
+      --radius-small: 12px;
+      --content-width: 1220px;
+    }
+
+    html[data-theme="light"] {
+      color-scheme: light;
+      --bg: #edf1f4;
+      --bg-elevated: #ffffff;
+      --bg-soft: #f4f7f9;
+      --panel: rgba(255, 255, 255, 0.92);
+      --panel-strong: #ffffff;
+      --line: rgba(28, 49, 67, 0.14);
+      --line-strong: rgba(28, 49, 67, 0.28);
+      --text: #12202b;
+      --muted: #506575;
+      --subtle: #718493;
+      --shadow: 0 24px 70px rgba(34, 51, 66, 0.16);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      background: var(--bg);
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        radial-gradient(circle at 15% 10%, rgba(85, 214, 232, 0.08), transparent 28rem),
+        radial-gradient(circle at 85% 15%, rgba(255, 191, 71, 0.08), transparent 30rem),
+        linear-gradient(180deg, var(--bg) 0%, #0c1119 48%, var(--bg) 100%);
+      color: var(--text);
+      font-family:
+        Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+      font-size: 16px;
+      line-height: 1.65;
+      text-rendering: optimizeLegibility;
+    }
+
+    html[data-theme="light"] body {
+      background:
+        radial-gradient(circle at 15% 10%, rgba(85, 214, 232, 0.12), transparent 28rem),
+        radial-gradient(circle at 85% 15%, rgba(255, 191, 71, 0.14), transparent 30rem),
+        var(--bg);
+    }
+
+    a {
+      color: var(--cyan);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 0.18em;
+    }
+
+    code,
+    pre,
+    .eyebrow,
+    .metric-value,
+    .nav-index,
+    .hero-kicker {
+      font-family:
+        "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    code {
+      padding: 0.12rem 0.34rem;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--bg-soft);
+      font-size: 0.9em;
+    }
+
+    .progress {
+      position: fixed;
+      inset: 0 0 auto;
+      z-index: 100;
+      height: 3px;
+      background: transparent;
+    }
+
+    .progress > span {
+      display: block;
+      width: 0;
+      height: 100%;
+      background: linear-gradient(90deg, var(--amber), var(--cyan));
+      box-shadow: 0 0 18px rgba(85, 214, 232, 0.55);
+    }
+
+    .hero {
+      position: relative;
+      min-height: 680px;
+      overflow: hidden;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(90deg, rgba(4, 8, 13, 0.96) 0%, rgba(4, 8, 13, 0.84) 46%, rgba(4, 8, 13, 0.42) 100%),
+        linear-gradient(180deg, transparent 50%, var(--bg) 100%),
+        url("data:image/png;base64,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") center 38% / cover no-repeat;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      opacity: 0.2;
+      background-image:
+        linear-gradient(rgba(85, 214, 232, 0.08) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(85, 214, 232, 0.08) 1px, transparent 1px);
+      background-size: 40px 40px;
+      mask-image: linear-gradient(to bottom, black 0%, transparent 85%);
+      pointer-events: none;
+    }
+
+    .hero-top {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      width: min(var(--content-width), calc(100% - 40px));
+      margin: 0 auto;
+      padding: 28px 0;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: #fff;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 10px;
+      background: rgba(7, 11, 16, 0.62);
+      box-shadow: inset 0 0 24px rgba(85, 214, 232, 0.08);
+      color: var(--amber);
+      font-family: "Cascadia Code", monospace;
+      font-size: 0.78rem;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .button {
+      display: inline-flex;
+      min-height: 42px;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 15px;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      border-radius: 10px;
+      background: rgba(7, 11, 16, 0.66);
+      color: #fff;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.9rem;
+      backdrop-filter: blur(12px);
+    }
+
+    .button:hover {
+      border-color: var(--cyan);
+      transform: translateY(-1px);
+    }
+
+    .hero-inner {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      width: min(var(--content-width), calc(100% - 40px));
+      min-height: 530px;
+      margin: 0 auto;
+      padding: 70px 0 95px;
+      align-content: center;
+      grid-template-columns: minmax(0, 760px) 1fr;
+      gap: 48px;
+    }
+
+    .hero-kicker {
+      margin: 0 0 20px;
+      color: var(--cyan);
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .hero h1 {
+      max-width: 820px;
+      margin: 0;
+      color: #fff;
+      font-size: clamp(3rem, 7vw, 6.8rem);
+      font-weight: 850;
+      letter-spacing: -0.075em;
+      line-height: 0.92;
+      text-wrap: balance;
+    }
+
+    .hero h1 span {
+      display: block;
+      margin-top: 0.14em;
+      color: var(--amber);
+      font-size: 0.52em;
+      letter-spacing: -0.045em;
+      line-height: 1.05;
+    }
+
+    .hero h1 span.h1-ega {
+      display: inline;
+      margin-top: 0;
+      font-size: 1em;
+      letter-spacing: inherit;
+      line-height: inherit;
+    }
+
+    .hero h1 span.h1-ega-e,
+    .hero h1 span.h1-ega-g,
+    .hero h1 span.h1-ega-a {
+      display: inline;
+      margin-top: 0;
+      font-size: 1em;
+      letter-spacing: inherit;
+      line-height: inherit;
+    }
+
+    .hero h1 span.h1-ega-e {
+      color: #ff5f5f;
+    }
+
+    .hero h1 span.h1-ega-g {
+      color: #4ade80;
+    }
+
+    .hero h1 span.h1-ega-a {
+      color: #6478ff;
+    }
+
+    .hero-lead {
+      max-width: 700px;
+      margin: 28px 0 0;
+      color: rgba(240, 245, 248, 0.82);
+      font-size: clamp(1.05rem, 2vw, 1.28rem);
+      line-height: 1.65;
+    }
+
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 30px;
+    }
+
+    .hero-chip {
+      padding: 8px 11px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 999px;
+      background: rgba(8, 12, 18, 0.56);
+      color: rgba(255, 255, 255, 0.82);
+      font-size: 0.82rem;
+      backdrop-filter: blur(10px);
+    }
+
+    .hero-status {
+      align-self: end;
+      padding: 22px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: var(--radius);
+      background: rgba(8, 12, 18, 0.64);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+    }
+
+    .hero-status small {
+      display: block;
+      color: rgba(255, 255, 255, 0.56);
+      font-size: 0.74rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .hero-status strong {
+      display: block;
+      margin-top: 8px;
+      color: #fff;
+      font-size: 1.1rem;
+    }
+
+    .hero-status p {
+      margin: 10px 0 0;
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 0.88rem;
+    }
+
+    .page {
+      display: grid;
+      width: min(var(--content-width), calc(100% - 40px));
+      margin: 0 auto;
+      padding: 70px 0 110px;
+      grid-template-columns: 248px minmax(0, 1fr);
+      gap: 52px;
+    }
+
+    .toc {
+      position: sticky;
+      top: 28px;
+      align-self: start;
+      max-height: calc(100vh - 56px);
+      overflow: auto;
+      padding: 22px 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
+    }
+
+    .toc-title {
+      margin: 0 10px 14px;
+      color: var(--subtle);
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .toc a {
+      display: grid;
+      padding: 9px 10px;
+      border-radius: 9px;
+      color: var(--muted);
+      grid-template-columns: 26px 1fr;
+      gap: 6px;
+      font-size: 0.86rem;
+      text-decoration: none;
+    }
+
+    .toc a:hover,
+    .toc a.active {
+      background: var(--cyan-soft);
+      color: var(--text);
+    }
+
+    .article a {
+      color: var(--cyan);
+      text-decoration-color: rgba(85, 214, 232, 0.45);
+      text-underline-offset: 0.16em;
+    }
+
+    .article a:hover {
+      color: var(--amber);
+    }
+
+    .nav-index {
+      color: var(--subtle);
+      font-size: 0.72rem;
+    }
+
+    .article {
+      min-width: 0;
+    }
+
+    .section {
+      scroll-margin-top: 28px;
+      margin-bottom: 90px;
+    }
+
+    .section-header {
+      display: grid;
+      margin-bottom: 28px;
+      grid-template-columns: 52px minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .section-number {
+      display: grid;
+      width: 52px;
+      height: 52px;
+      place-items: center;
+      border: 1px solid var(--line-strong);
+      border-radius: 14px;
+      background: var(--bg-soft);
+      color: var(--amber);
+      font-family: "Cascadia Code", monospace;
+      font-weight: 800;
+    }
+
+    .eyebrow {
+      margin: 1px 0 4px;
+      color: var(--cyan);
+      font-size: 0.74rem;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: clamp(2rem, 4vw, 3.25rem);
+      letter-spacing: -0.045em;
+      line-height: 1.08;
+      text-wrap: balance;
+    }
+
+    h3 {
+      margin: 0 0 12px;
+      font-size: 1.32rem;
+      letter-spacing: -0.025em;
+      line-height: 1.25;
+    }
+
+    h4 {
+      margin: 0;
+      font-size: 1rem;
+    }
+
+    .section-intro {
+      max-width: 830px;
+      margin: -4px 0 28px 70px;
+      color: var(--muted);
+      font-size: 1.08rem;
+    }
+
+    .panel {
+      padding: clamp(22px, 4vw, 36px);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+    }
+
+    .panel + .panel {
+      margin-top: 20px;
+    }
+
+    .summary-grid,
+    .feature-grid {
+      display: grid;
+      gap: 18px;
+    }
+
+    .summary-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .summary-card {
+      min-height: 190px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background:
+        linear-gradient(145deg, var(--panel-strong), var(--bg-soft));
+    }
+
+    .summary-card .icon {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      margin-bottom: 28px;
+      place-items: center;
+      border-radius: 11px;
+      background: var(--amber-soft);
+      color: var(--amber);
+      font-family: "Cascadia Code", monospace;
+      font-weight: 800;
+    }
+
+    .summary-card p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 0.94rem;
+    }
+
+    .metric-strip {
+      display: grid;
+      margin-top: 20px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      background: var(--panel);
+    }
+
+    .metric {
+      min-height: 126px;
+      padding: 22px;
+      border-right: 1px solid var(--line);
+    }
+
+    .metric:last-child {
+      border-right: 0;
+    }
+
+    .metric-value {
+      color: var(--amber);
+      font-size: clamp(1.6rem, 3vw, 2.3rem);
+      font-weight: 800;
+      letter-spacing: -0.06em;
+    }
+
+    .metric-label {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .architecture {
+      overflow: hidden;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background:
+        radial-gradient(circle at 50% 0%, rgba(85, 214, 232, 0.08), transparent 55%),
+        var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .architecture svg {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .architecture .node {
+      fill: var(--panel-strong);
+      stroke: var(--line-strong);
+      stroke-width: 1.3;
+    }
+
+    .architecture .node-accent {
+      fill: var(--amber-soft);
+      stroke: rgba(255, 191, 71, 0.58);
+      stroke-width: 1.3;
+    }
+
+    .architecture .node-video {
+      fill: var(--cyan-soft);
+      stroke: rgba(85, 214, 232, 0.55);
+      stroke-width: 1.3;
+    }
+
+    .architecture text {
+      fill: var(--text);
+      font-family: system-ui, sans-serif;
+    }
+
+    .architecture .small {
+      fill: var(--muted);
+      font-size: 12px;
+    }
+
+    .architecture .title {
+      font-size: 16px;
+      font-weight: 750;
+    }
+
+    .architecture .line {
+      fill: none;
+      stroke: var(--subtle);
+      stroke-width: 1.5;
+      marker-end: url(#arrow);
+    }
+
+    .architecture .bus {
+      fill: none;
+      stroke: var(--amber);
+      stroke-width: 2;
+      stroke-dasharray: 6 5;
+      marker-end: url(#arrow-amber);
+    }
+
+    .memory-map-visual {
+      overflow: hidden;
+      margin: 24px 0;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background:
+        radial-gradient(circle at 78% 12%, rgba(116, 219, 155, 0.08), transparent 30%),
+        radial-gradient(circle at 20% 0%, rgba(85, 214, 232, 0.07), transparent 44%),
+        var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .memory-map-visual svg {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .memory-map-visual text {
+      fill: var(--text);
+      font-family: system-ui, sans-serif;
+    }
+
+    .memory-map-visual .heading {
+      font-size: 16px;
+      font-weight: 750;
+    }
+
+    .memory-map-visual .caption,
+    .memory-map-visual .address,
+    .memory-map-visual .detail {
+      fill: var(--muted);
+      font-size: 12px;
+    }
+
+    .memory-map-visual .address {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+    }
+
+    .memory-map-visual .frame {
+      fill: var(--bg-soft);
+      stroke: var(--line-strong);
+      stroke-width: 1.2;
+    }
+
+    .memory-map-visual .block-conventional {
+      fill: var(--cyan-soft);
+      stroke: rgba(85, 214, 232, 0.62);
+    }
+
+    .memory-map-visual .block-video,
+    .memory-map-visual .block-ems {
+      fill: var(--amber-soft);
+      stroke: rgba(255, 191, 71, 0.68);
+    }
+
+    .memory-map-visual .block-rom {
+      fill: var(--red-soft);
+      stroke: rgba(255, 127, 136, 0.65);
+    }
+
+    .memory-map-visual .block-umb {
+      fill: var(--green-soft);
+      stroke: rgba(116, 219, 155, 0.72);
+    }
+
+    .memory-map-visual .block-direct {
+      fill: url(#sdram-hatch);
+      stroke: var(--subtle);
+      stroke-dasharray: 4 3;
+    }
+
+    .memory-map-visual .block {
+      stroke-width: 1.2;
+    }
+
+    .memory-map-visual .separator,
+    .memory-map-visual .connector {
+      fill: none;
+      stroke: var(--subtle);
+      stroke-width: 1.2;
+    }
+
+    .memory-map-visual .connector {
+      stroke-dasharray: 4 4;
+    }
+
+    .memory-map-visual .block-label {
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .memory-map-visual .block-label-small {
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .callout {
+      display: grid;
+      margin: 22px 0;
+      padding: 20px 22px;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--cyan);
+      border-radius: 0 var(--radius-small) var(--radius-small) 0;
+      background: var(--cyan-soft);
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 14px;
+    }
+
+    .callout.warning {
+      border-left-color: var(--amber);
+      background: var(--amber-soft);
+    }
+
+    .callout.danger {
+      border-left-color: var(--red);
+      background: var(--red-soft);
+    }
+
+    .callout strong {
+      display: block;
+      margin-bottom: 3px;
+    }
+
+    .callout p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .callout-mark {
+      color: var(--cyan);
+      font-family: "Cascadia Code", monospace;
+      font-weight: 900;
+    }
+
+    .callout.warning .callout-mark {
+      color: var(--amber);
+    }
+
+    .callout.danger .callout-mark {
+      color: var(--red);
+    }
+
+    .feature-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .feature-card {
+      position: relative;
+      min-height: 220px;
+      overflow: hidden;
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .feature-card::after {
+      content: attr(data-label);
+      position: absolute;
+      right: 18px;
+      bottom: -14px;
+      color: var(--text);
+      font-family: "Cascadia Code", monospace;
+      font-size: 4.6rem;
+      font-weight: 900;
+      letter-spacing: -0.1em;
+      opacity: 0.025;
+    }
+
+    .feature-card ul,
+    .check-list,
+    .plain-list {
+      margin: 15px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .feature-card li,
+    .check-list li,
+    .plain-list li {
+      position: relative;
+      margin: 9px 0;
+      padding-left: 22px;
+      color: var(--muted);
+    }
+
+    .feature-card li::before,
+    .check-list li::before {
+      content: "";
+      position: absolute;
+      top: 0.7em;
+      left: 0;
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+      background: var(--green);
+      box-shadow: 0 0 12px rgba(116, 219, 155, 0.35);
+      transform: translateY(-50%);
+    }
+
+    .plain-list li::before {
+      content: "—";
+      position: absolute;
+      left: 0;
+      color: var(--subtle);
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 0.72fr);
+      gap: 22px;
+    }
+
+    .mode-card {
+      display: grid;
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background:
+        radial-gradient(circle at 90% 10%, rgba(255, 191, 71, 0.12), transparent 15rem),
+        var(--panel);
+      box-shadow: var(--shadow);
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 24px;
+    }
+
+    .mode-card-number {
+      color: var(--amber);
+      font-family: "Cascadia Code", monospace;
+      font-size: clamp(4rem, 9vw, 8rem);
+      font-weight: 900;
+      letter-spacing: -0.12em;
+      line-height: 0.8;
+      opacity: 0.85;
+    }
+
+    .mode-card p {
+      color: var(--muted);
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .chip {
+      display: inline-flex;
+      padding: 6px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--bg-soft);
+      color: var(--muted);
+      font-family: "Cascadia Code", monospace;
+      font-size: 0.74rem;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-small);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    th,
+    td {
+      padding: 13px 15px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: var(--bg-soft);
+      color: var(--subtle);
+      font-size: 0.74rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    td {
+      color: var(--muted);
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 0.73rem;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .status::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: currentColor;
+      box-shadow: 0 0 9px currentColor;
+    }
+
+    .status-ok {
+      border-color: rgba(116, 219, 155, 0.3);
+      background: var(--green-soft);
+      color: var(--green);
+    }
+
+    details {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-small);
+      background: var(--panel);
+    }
+
+    summary {
+      padding: 16px 18px;
+      cursor: pointer;
+      color: var(--text);
+      font-weight: 750;
+    }
+
+    details > div {
+      padding: 0 18px 18px;
+    }
+
+    footer {
+      width: min(var(--content-width), calc(100% - 40px));
+      margin: 0 auto;
+      padding: 0 0 60px;
+      color: var(--subtle);
+      font-size: 0.82rem;
+    }
+
+    footer .footer-inner {
+      display: flex;
+      padding-top: 22px;
+      border-top: 1px solid var(--line);
+      justify-content: space-between;
+      gap: 30px;
+    }
+
+    @media (max-width: 1000px) {
+      .hero-inner {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-status {
+        max-width: 560px;
+        align-self: start;
+      }
+
+      .page {
+        grid-template-columns: 1fr;
+      }
+
+      .toc {
+        position: relative;
+        top: auto;
+        display: grid;
+        max-height: none;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .toc-title {
+        grid-column: 1 / -1;
+      }
+
+      .summary-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .metric-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .metric:nth-child(2) {
+        border-right: 0;
+      }
+
+      .metric:nth-child(-n+2) {
+        border-bottom: 1px solid var(--line);
+      }
+    }
+
+    @media (max-width: 720px) {
+      .hero {
+        min-height: 720px;
+      }
+
+      .hero-top {
+        align-items: flex-start;
+      }
+
+      .brand span:last-child {
+        display: none;
+      }
+
+      .hero-actions {
+        flex-direction: column;
+      }
+
+      .button {
+        min-height: 38px;
+        padding: 0 12px;
+        font-size: 0.78rem;
+      }
+
+      .hero-inner {
+        padding-top: 25px;
+      }
+
+      .hero h1 {
+        font-size: clamp(2.9rem, 18vw, 5rem);
+      }
+
+      .page {
+        width: min(100% - 24px, var(--content-width));
+        padding-top: 38px;
+      }
+
+      .toc {
+        grid-template-columns: 1fr;
+      }
+
+      .section {
+        margin-bottom: 65px;
+      }
+
+      .section-header {
+        grid-template-columns: 42px minmax(0, 1fr);
+      }
+
+      .section-number {
+        width: 42px;
+        height: 42px;
+      }
+
+      .section-intro {
+        margin-left: 0;
+      }
+
+      .feature-grid,
+      .split,
+      .mode-card {
+        grid-template-columns: 1fr;
+      }
+
+      .mode-card-number {
+        order: -1;
+      }
+
+      .metric-strip {
+        grid-template-columns: 1fr;
+      }
+
+      .metric {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .metric:last-child {
+        border-bottom: 0;
+      }
+
+      footer .footer-inner {
+        flex-direction: column;
+      }
+    }
+
+    @media print {
+      :root {
+        --bg: #fff;
+        --bg-elevated: #fff;
+        --bg-soft: #f4f4f4;
+        --panel: #fff;
+        --panel-strong: #fff;
+        --line: rgba(0, 0, 0, 0.16);
+        --line-strong: rgba(0, 0, 0, 0.3);
+        --text: #111;
+        --muted: #3b3b3b;
+        --subtle: #666;
+        --shadow: none;
+      }
+
+      body {
+        background: #fff;
+      }
+
+      .progress,
+      .hero-actions,
+      .toc {
+        display: none;
+      }
+
+      .hero {
+        min-height: 430px;
+        break-after: page;
+        background:
+          linear-gradient(90deg, rgba(0, 0, 0, 0.88), rgba(0, 0, 0, 0.42)),
+          url("data:image/png;base64,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") center / cover no-repeat;
+      }
+
+      .hero-inner {
+        min-height: 320px;
+        padding: 40px 0;
+      }
+
+      .page {
+        display: block;
+        width: 100%;
+        padding: 20px 0;
+      }
+
+      .section {
+        break-inside: avoid;
+        margin-bottom: 38px;
+      }
+
+      .panel,
+      .feature-card,
+      .architecture,
+      .memory-map-visual,
+      .mode-card {
+        box-shadow: none;
+        backdrop-filter: none;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress" aria-hidden="true"><span id="progress-bar" style="width: 0%;"></span></div>
+
+  <header class="hero">
+    <div class="hero-top">
+      <div class="brand">
+        <div class="brand-mark">8088</div>
+        <span>PCXT · MiSTer FPGA</span>
+      </div>
+
+      <div class="hero-actions">
+        <button class="button" type="button" id="theme-toggle">Change theme</button>
+        <button class="button" type="button" onclick="window.print()">Print / PDF</button>
+      </div>
+    </div>
+
+    <div class="hero-inner">
+      <div>
+        <p class="hero-kicker">Technical report · EGA core with optional VGA mode 13h</p>
+        <h1>
+          IBM PC/XT <span class="h1-ega"><span class="h1-ega-e">E</span><span class="h1-ega-g">G</span><span class="h1-ega-a">A</span></span>
+          <span>recreated in FPGA</span>
+        </h1>
+        <p class="hero-lead">
+          A MiSTer implementation designed to reproduce the IBM PC/XT
+          ecosystem reliably, with an 8088 CPU, native EGA architecture,
+          integrated CGA compatibility and an optional VGA mode 13h extension.
+        </p>
+
+        <div class="hero-meta">
+          <span class="hero-chip">Video: EGA</span>
+          <span class="hero-chip">VGA mode 13h: optional</span>
+          <span class="hero-chip">License: GPL-3.0</span>
+          <span class="hero-chip">Platform: MiSTer FPGA</span>
+        </div>
+      </div>
+
+      <aside class="hero-status">
+        <small>Video configuration</small>
+        <strong><span class="status status-ok">EGA first</span></strong>
+        <p>CGA-compatible software runs through EGA. VGA mode 13h is available as an optional OSD feature.</p>
+      </aside>
+    </div>
+  </header>
+
+  <main class="page">
+    <nav class="toc" aria-label="Report contents">
+      <p class="toc-title">Contents</p>
+      <a href="#overview"><span class="nav-index">01</span><span>Overview</span></a>
+      <a href="#architecture"><span class="nav-index">02</span><span>Architecture</span></a>
+      <a href="#video"><span class="nav-index">03</span><span>EGA video</span></a>
+      <a href="#vga"><span class="nav-index">04</span><span>VGA 13h</span></a>
+      <a href="#features"><span class="nav-index">05</span><span>Features</span></a>
+      <a href="#configuration"><span class="nav-index">06</span><span>Configuration</span></a>
+      <a href="#startup"><span class="nav-index">07</span><span>BIOS and startup</span></a>
+      <a href="#future"><span class="nav-index">08</span><span>Future improvements</span></a>
+      <a href="#scope"><span class="nav-index">09</span><span>Scope</span></a>
+      <a href="#credits"><span class="nav-index">10</span><span>Credits</span></a>
+    </nav>
+
+    <article class="article">
+      <section class="section" id="overview">
+        <header class="section-header">
+          <div class="section-number">01</div>
+          <div>
+            <p class="eyebrow">Overview</p>
+            <h2>A complete PC/XT, not a software-only emulator</h2>
+          </div>
+        </header>
+
+        <p class="section-intro">
+          The project implements classic components as RTL logic running on the
+          MiSTer FPGA. Its goal is to recreate the machine and its interfaces,
+          rather than translate instructions on a host operating system.
+        </p>
+
+        <div class="summary-grid">
+          <article class="summary-card">
+            <div class="icon">CPU</div>
+            <h3>PC/XT foundation</h3>
+            <p>
+              8088 CPU with multiple clock rates, compatible chipset,
+              conventional memory, UMB, EMS, BIOS, floppy drives and XTIDE.
+            </p>
+          </article>
+
+          <article class="summary-card">
+            <div class="icon">EGA</div>
+            <h3>Single-owner video</h3>
+            <p>
+              EGA owns CPU access, VRAM, text, graphics, timing and RGB output.
+              CGA compatibility is part of EGA.
+            </p>
+          </article>
+
+          <article class="summary-card">
+            <div class="icon">13h</div>
+            <h3>Focused VGA extension</h3>
+            <p>
+              Adds 320x200 with 256 colours, a packed framebuffer and DAC,
+              without turning the core into a general VGA implementation.
+            </p>
+          </article>
+        </div>
+
+        <div class="metric-strip">
+          <div class="metric">
+            <div class="metric-value">8088</div>
+            <div class="metric-label">Main CPU recreated in logic</div>
+          </div>
+          <div class="metric">
+            <div class="metric-value">640 KiB</div>
+            <div class="metric-label">Conventional memory</div>
+          </div>
+          <div class="metric">
+            <div class="metric-value">2 MiB</div>
+            <div class="metric-label">EMS page frame at D000h</div>
+          </div>
+          <div class="metric">
+            <div class="metric-value">320x200x256</div>
+            <div class="metric-label">VGA mode 13h extension</div>
+          </div>
+        </div>
+
+        <div class="callout">
+          <div class="callout-mark">i</div>
+          <div>
+            <strong>How to read this project</strong>
+            <p>
+              This is an EGA-centred PC/XT core. Compatibility with CGA modes
+              does not mean that an independent CGA card exists, and mode 13h
+              support does not imply a complete VGA implementation.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="architecture">
+        <header class="section-header">
+          <div class="section-number">02</div>
+          <div>
+            <p class="eyebrow">Logical design</p>
+            <h2>Core architecture</h2>
+          </div>
+        </header>
+
+        <p class="section-intro">
+          The design combines CPU, chipset, memory and peripheral blocks with
+          a unified video subsystem. MiSTer provides the physical integration
+          for storage, video, audio and controls.
+        </p>
+
+        <div class="callout">
+          <div class="callout-mark">i</div>
+          <div>
+            <strong>Video implementation reference</strong>
+            <p>
+              The EGA implementation and the optional VGA mode 13h behaviour
+              are based on the video emulation code in
+              <a href="https://github.com/86box/86box" target="_blank" rel="noopener noreferrer">86Box</a>.
+              It is used as a behavioural reference; the MiSTer core remains an
+              RTL implementation tailored to this project.
+            </p>
+          </div>
+        </div>
+
+        <div class="architecture">
+          <svg viewBox="0 0 980 570" role="img" aria-labelledby="arch-title arch-desc">
+            <title id="arch-title">Logical architecture of the PCXT core for MiSTer</title>
+            <desc id="arch-desc">
+              The MCL86 CPU communicates with the KFPC-XT chipset. The chipset
+              connects memory, storage, audio, input and the EGA video subsystem
+              with its optional VGA mode 13h extension.
+            </desc>
+
+            <defs>
+              <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L0,6 L9,3 z" fill="var(--subtle)"></path>
+              </marker>
+              <marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L0,6 L9,3 z" fill="var(--amber)"></path>
+              </marker>
+            </defs>
+
+            <rect class="node-accent" x="45" y="205" width="180" height="105" rx="18"></rect>
+            <text class="title" x="135" y="245" text-anchor="middle">CPU MCL86</text>
+            <text class="small" x="135" y="270" text-anchor="middle">8088 · 4 clock settings</text>
+            <text class="small" x="135" y="290" text-anchor="middle">PC/XT-compatible bus</text>
+
+            <rect class="node" x="310" y="185" width="220" height="145" rx="18"></rect>
+            <text class="title" x="420" y="228" text-anchor="middle">Chipset KFPC-XT</text>
+            <text class="small" x="420" y="254" text-anchor="middle">Decoding · DMA · IRQ</text>
+            <text class="small" x="420" y="274" text-anchor="middle">Timing · peripherals</text>
+            <text class="small" x="420" y="294" text-anchor="middle">System integration</text>
+
+            <rect class="node" x="615" y="30" width="300" height="88" rx="16"></rect>
+            <text class="title" x="765" y="65" text-anchor="middle">Memory</text>
+            <text class="small" x="765" y="89" text-anchor="middle">640 KiB · UMB · EMS up to 2 MiB</text>
+
+            <rect class="node" x="615" y="145" width="300" height="88" rx="16"></rect>
+            <text class="title" x="765" y="180" text-anchor="middle">Storage</text>
+            <text class="small" x="765" y="204" text-anchor="middle">FDD A/B · XTIDE · second SD</text>
+
+            <rect class="node-video" x="615" y="260" width="300" height="112" rx="16"></rect>
+            <text class="title" x="765" y="296" text-anchor="middle">Unified video</text>
+            <text class="small" x="765" y="321" text-anchor="middle">Native EGA + CGA compatibility</text>
+            <text class="small" x="765" y="342" text-anchor="middle">VGA mode 13h when enabled</text>
+
+            <rect class="node" x="615" y="399" width="300" height="88" rx="16"></rect>
+            <text class="title" x="765" y="434" text-anchor="middle">Audio and input</text>
+            <text class="small" x="765" y="458" text-anchor="middle">OPL2 · C/MS · speaker · mouse · joystick</text>
+
+            <rect class="node-accent" x="310" y="430" width="220" height="92" rx="18"></rect>
+            <text class="title" x="420" y="466" text-anchor="middle">MiSTer platform</text>
+            <text class="small" x="420" y="490" text-anchor="middle">Video · audio · SD · OSD · controls</text>
+
+            <path class="bus" d="M225 257 L310 257"></path>
+            <path class="line" d="M530 215 C570 180 575 76 615 76"></path>
+            <path class="line" d="M530 235 C575 220 580 189 615 189"></path>
+            <path class="line" d="M530 275 C570 285 580 316 615 316"></path>
+            <path class="line" d="M530 305 C575 340 580 443 615 443"></path>
+            <path class="bus" d="M420 330 L420 430"></path>
+          </svg>
+        </div>
+
+        <div class="panel" style="margin-top: 22px">
+          <h3>Crossing into the video clock domain</h3>
+          <p>
+            The video subsystem runs on its own 28.636 MHz clock, so every I/O
+            write to a video port crosses a clock boundary. That crossing is a
+            posted write: the cycle is captured in the chipset domain, where it
+            is synchronous and a single clock of <code>IOW</code> is enough to
+            take it, and presented to the video side as a pulse of guaranteed
+            minimum width and gap. A new I/O cycle arriving while one is still
+            draining is held through the ready tree.
+          </p>
+          <p>
+            Reads cross the same boundary and have to come back, which takes
+            two synchroniser stages out, the settled-bus qualifier, the decode,
+            and two stages back — five to six chipset clocks. A free bus is not
+            an answered read, so the crossing holds the CPU for the return trip
+            as well, counted from the moment the read is presented to the video
+            side rather than from when the CPU asserted: a read issued behind a
+            draining write reaches the card late and has to be given the trip
+            from there. At the three lower CPU speeds the bus cycle is longer
+            than the trip and the hold never becomes the thing that ends it. At
+            the fastest setting it is what stops the CPU latching the bus while
+            the answer is still crossing, which is what corrupted palette reads
+            and, through them, any software that fades by reading the palette
+            back and scaling it.
+          </p>
+          <p>
+            The alternative — sampling the live bus and trusting the pulse to
+            be wide enough — works comfortably at the three lower CPU speeds
+            and fails at the fastest one, where an I/O write can be four
+            chipset clocks. Losing a CRTC index leaves the data byte that
+            follows in whatever register the index last named, so the damage
+            accumulates rather than showing up at once. Handling it by
+            construction removes a whole class of speed-dependent faults
+            instead of one symptom:
+            <code>rtl/video/TESTBENCH/ega_io_stretch_tb.sv</code> drives two
+            identical video instances, one through each style of crossing, and
+            sweeps the natural phase drift of the two clocks.
+          </p>
+        </div>
+
+        <div class="callout warning">
+          <div class="callout-mark">!</div>
+          <div>
+            <strong>RTC/CMOS moved to 340h-341h</strong>
+            <p>
+              The EGA attribute controller mirrors 3C0h-3CFh at 2C0h-2CFh,
+              the address the RTC/CMOS device used on the previous
+              CGA/Hercules-based core. Any index write landing there also
+              reaches the attribute controller and clears Palette Address
+              Source, blanking the display. The RTC/CMOS is now decoded at
+              340h-341h instead, one of the standard base addresses of a
+              real MM58167 card and clear of every other port used by the
+              core. Tools that read it directly - <code>GET_RTC.EXE</code>
+              and the <code>x86_launcher</code> AppId handled by
+              <code>LAUNCHER.EXE</code> - need to be pointed at the new port.
+            </p>
+          </div>
+        </div>
+
+        <details>
+          <summary>Origins of the main blocks</summary>
+          <div>
+            <ul class="plain-list">
+              <li><strong>MCL86</strong>, by MicroCoreLabs, as the CPU foundation.</li>
+              <li><strong>KFPC-XT</strong>, by kitune-san, as the PC/XT platform foundation.</li>
+              <li><strong><a href="https://github.com/86box/86box" target="_blank" rel="noopener noreferrer">86Box</a></strong>, whose video emulation code provides the basis for the EGA implementation and optional VGA mode 13h support.</li>
+              <li><strong>JTOPL</strong>, by José Tejada/jotego, for AdLib OPL2 audio.</li>
+              <li>MiSTer port integration, adaptation and further development by <strong>spark2k06</strong>.</li>
+            </ul>
+          </div>
+        </details>
+      </section>
+
+      <section class="section" id="video">
+        <header class="section-header">
+          <div class="section-number">03</div>
+          <div>
+            <p class="eyebrow">Video architecture</p>
+            <h2>EGA as the central video architecture</h2>
+          </div>
+        </header>
+
+        <p class="section-intro">
+          The current core replaces the former model of several selectable
+          video cards with one maintained EGA subsystem.
+        </p>
+
+        <div class="split">
+          <div class="panel">
+            <h3>End-to-end ownership</h3>
+            <ul class="check-list">
+              <li>CPU-visible video-port decoding.</li>
+              <li>Memory decoding and planar VRAM access.</li>
+              <li>Text and graphics rendering.</li>
+              <li>CGA-compatible modes implemented within EGA.</li>
+              <li>Splash, timing, blanking and RGB output.</li>
+              <li>Resolution information exposed to the MiSTer environment.</li>
+            </ul>
+          </div>
+
+          <div class="panel">
+            <h3>What was removed</h3>
+            <ul class="plain-list">
+              <li>An independent CGA card as a fallback.</li>
+              <li>Active HGC and Tandy paths in this variant.</li>
+              <li>OSD selection between video cards.</li>
+              <li>Hidden passthrough for splash, boot or CGA games.</li>
+              <li>Conditional build paths with no present purpose.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top: 22px">
+          <h3>Dual dot clock</h3>
+          <p>
+            A standard IBM EGA runs two dot clocks and selects between them from
+            Miscellaneous Output bit 2: 14.318181 MHz for the 200-line
+            CGA-compatible modes and 16.257 MHz for the 350-line and
+            MDA-compatible ones. Both are implemented and switch per mode, rather
+            than deriving everything from one fixed rate.
+          </p>
+        </div>
+
+        <div class="panel" style="margin-top: 22px">
+          <h3>Horizontal Pel Panning</h3>
+          <p>
+            The Attribute Controller panning register (<code>3C0h</code>, index
+            <code>13h</code>) shifts the displayed image left within the
+            character cell, which is what turns a byte-granular start address
+            into smooth pixel-by-pixel scrolling. The core applies it to the
+            finished dot stream, so text, graphics and the splash all go through
+            one implementation, and it follows the same table 86Box derives in
+            <code>vid_ega.c</code>: one step per register value in the 8-dot
+            modes, doubled in the 320-wide modes so a step is one visible pixel,
+            and the 9-dot text cell taking its aligned position at value 8 the
+            way a real EGA does.
+          </p>
+          <p>
+            A panned line displays part of one more character than it fetches,
+            so the fetch window carries one extra character past the end of the
+            line, and the panning value is latched once per scanline rather than
+            once per frame — that is what a per-scanline panning wave, a stock
+            EGA effect, needs in order to work at all.
+            <code>rtl/video/TESTBENCH/ega_pan_split_tb.v</code> checks the shift
+            table, the extra fetch and the fact that the display window itself
+            does not move against HSYNC.
+          </p>
+        </div>
+
+        <div class="panel" style="margin-top: 22px">
+          <h3>Line Compare and split screen</h3>
+          <p>
+            The CRTC Line Compare register (<code>18h</code>, with bit 8 in the
+            overflow register and bit 9 in Maximum Scan Line) names the last
+            scanline drawn from the start address. The one after it restarts the
+            display at address 0 with a fresh character row, which is how a
+            status area stays pinned to the bottom of the screen while
+            everything above it scrolls. The core follows the compare 86Box
+            builds in <code>ega_recalctimings</code> and acts on it where
+            <code>ega_poll</code> does, at the scanline boundary.
+          </p>
+          <p>
+            The register resets to <code>0FFh</code> — the value the BIOS writes
+            in every ordinary mode — because the compare is the register plus
+            one, so a zero would split every frame at its second scanline.
+          </p>
+        </div>
+
+        <div class="callout warning">
+          <div class="callout-mark">!</div>
+          <div>
+            <strong>CGA compatibility does not mean separate CGA hardware</strong>
+            <p>
+              Text modes, 2 bpp graphics and <code>B8000h</code>-style accesses
+              are retained as compatible behaviour of a real EGA. This reduces
+              duplication and prevents two pipelines from competing for video.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="vga">
+        <header class="section-header">
+          <div class="section-number">04</div>
+          <div>
+            <p class="eyebrow">Graphics extension</p>
+            <h2>VGA mode 13h, deliberately limited in scope</h2>
+          </div>
+        </header>
+
+        <div class="mode-card">
+          <div>
+            <h3>A direct and familiar mode for DOS software</h3>
+            <p>
+              The extension implements the familiar <code>320x200x256</code>
+              mode: one byte per pixel, 64,000 visible bytes and linear access
+              from <code>A000:0000</code>.
+            </p>
+            <div class="chips">
+              <span class="chip">8 bpp packed</span>
+              <span class="chip">64 KiB aperture</span>
+              <span class="chip">256 DAC entries</span>
+              <span class="chip">Ports 03C7h–03C9h</span>
+            </div>
+          </div>
+          <div class="mode-card-number">13h</div>
+        </div>
+
+        <div class="panel">
+          <h3>Why it is called VGA and not MCGA</h3>
+          <p>
+            This extension was called MCGA until the behaviour it actually
+            provides was pinned down. Real MCGA hardware does not implement
+            EGA's 16-colour planar graphics modes
+            (<code>0Dh</code>/<code>0Eh</code>/<code>10h</code>) at all, so an
+            MCGA could never run the mode <code>0Dh</code> gameplay this feature
+            was built for. 86Box, whose video emulation this path is modelled on,
+            has no MCGA code anywhere - even the one machine that historically
+            shipped it is emulated as a VGA variant. What makes the target
+            software work is the DAC augmenting the EGA modes plus mode 13h,
+            which is VGA behaviour. The name was changed to match.
+          </p>
+        </div>
+
+        <div class="panel">
+          <h3>The DAC feeds every mode, not only 13h</h3>
+          <p>
+            This is the part that matters for real software. A game that detects
+            a VGA, switches to a <em>16-colour</em> mode for gameplay and then
+            loads its palette through the DAC gets the palette it intended,
+            instead of the stock EGA one. Titus the Fox and Prehistorik 2 both do
+            exactly this, and it is why their title screens looked right while
+            gameplay did not.
+          </p>
+          <p>
+            A single default table cannot serve both conventions at once - VGA
+            attribute code <code>14h</code> is brown, the EGA 200-line code
+            <code>14h</code> is light red - so each of the 256 entries carries a
+            validity bit. Entries software never wrote fall back to the classic
+            EGA palette, which is what keeps the option-off path unchanged by
+            construction.
+          </p>
+        </div>
+
+        <div class="panel">
+          <h3>Activation path</h3>
+          <p>
+            <code>VGA Mode 13h</code> is an OSD option and defaults to Off.
+            When enabled, <code>VGATSR.COM</code> intercepts <code>INT 10h</code>
+            and drives the RTL path through control port <code>03CDh</code>. With
+            the option disabled the DAC ports do not decode at all, which is
+            correct for an EGA: a real IBM EGA has no DAC, its palette lives in
+            the attribute controller. The TSR refuses to install in that case,
+            since answering “VGA present” on a machine that will
+            never render mode 13h only sends games down a path that leaves the
+            screen black.
+          </p>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Supported behaviour</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Mode entry</td>
+                  <td><code>INT 10h AX=0013h</code> through the TSR, with the OSD option enabled.</td>
+                </tr>
+                <tr>
+                  <td>Framebuffer</td>
+                  <td><code>A000:0000</code>, one byte per pixel and 64,000 visible bytes.</td>
+                </tr>
+                <tr>
+                  <td>Palette</td>
+                  <td>256-entry DAC, 6-bit RGB components and auto-increment.</td>
+                </tr>
+                <tr>
+                  <td>Auxiliary BIOS</td>
+                  <td>
+                    Pixel read/write, detection, and the DAC subfunctions
+                    (<code>AH=10h</code> with <code>AL=10h/12h/15h/17h</code>)
+                    that a real EGA option ROM drops silently because they are
+                    VGA additions.
+                  </td>
+                </tr>
+                <tr>
+                  <td>Mode exit</td>
+                  <td>Another BIOS mode change returns ownership to the EGA path.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Should it stay off for EGA-only sessions?</h3>
+          <p>
+            For everyday use, leaving it on doesn't break anything: in
+            <code>ega_top.v</code>, <code>ega_dac_hit</code> only substitutes a
+            palette entry when that specific DAC index was actually written by
+            software (<code>vga_dac_sample_valid</code>), so an EGA game that
+            never writes <code>3C7h</code>–<code>3C9h</code> looks
+            identical with the option on or off, and
+            <code>VGATSR.COM</code> chains every unrecognised
+            <code>INT 10h</code> call straight through to the real BIOS.
+          </p>
+          <p>
+            But the option exists for a reason, and turning it off is the
+            right call when the goal is a machine that behaves and is detected
+            as a real EGA with no VGA trace at all — which is why the
+            ports are gated on the option in the first place rather than left
+            decoding permanently:
+          </p>
+          <ul class="plain-list">
+            <li>
+              <strong>Port-level fingerprint.</strong> With the option on,
+              ports <code>3C7h</code>–<code>3C9h</code> answer as a DAC
+              even when no software ever calls the BIOS for one — a real
+              IBM EGA doesn't decode those ports at all, its palette lives in
+              the attribute controller. Software that fingerprints hardware by
+              probing I/O ports directly, rather than through
+              <code>INT 10h</code>, can see that and conclude a VGA is
+              present. Turning the option off closes those ports, so the card
+              answers exactly as an EGA should to a port probe as much as to a
+              BIOS call.
+            </li>
+            <li>
+              <strong>BIOS-level fidelity.</strong> With <code>VGATSR.COM</code>
+              resident, <code>INT 10h AH=12h/BL=10h</code> (“Return EGA
+              information”, a standard EGA call, not a VGA-only one) is
+              answered by the TSR with a fixed value instead of being chained
+              to the loaded EGA BIOS ROM. Not loading the TSR means every EGA
+              BIOS call gets exactly what that ROM would answer, with nothing
+              intercepted.
+            </li>
+          </ul>
+          <p>
+            So: fine to leave on for normal play, but turn it off when the
+            goal is specifically authentic, untraceable EGA behaviour —
+            testing against real hardware, for example, or running EGA-only
+            software with nothing else in the picture.
+          </p>
+        </div>
+
+        <div class="callout danger">
+          <div class="callout-mark">×</div>
+          <div>
+            <strong>This is not a complete VGA</strong>
+            <p>
+              It does not claim VBE/SVGA, Mode X, planar 256-colour VGA modes,
+              an independent VGA text pipeline or full compatibility with VGA
+              registers unnecessary for the mode 13h objective.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="features">
+        <header class="section-header">
+          <div class="section-number">05</div>
+          <div>
+            <p class="eyebrow">Features</p>
+            <h2>System capabilities</h2>
+          </div>
+        </header>
+
+        <div class="feature-grid">
+          <article class="feature-card" data-label="CPU">
+            <h3>Processor and timing</h3>
+            <ul>
+              <li>MCL86-based 8088 CPU.</li>
+              <li>4.77 MHz, 7.16 MHz and 9.54 MHz with a cycle-accurate target.</li>
+              <li>Fast mode equivalent to a 3.5 MHz PC/AT 286 - see the note on its current state below.</li>
+              <li>Clock selection from the OSD.</li>
+            </ul>
+          </article>
+
+          <article class="feature-card" data-label="RAM">
+            <h3>Memory</h3>
+            <ul>
+              <li>640 KiB of conventional memory.</li>
+              <li>Optional 48 KiB UMB at C400h-CFFFh.</li>
+              <li>Optional EMS of up to 2 MiB with a fixed D000h-DFFFh page frame.</li>
+              <li>E000h-EBFFh remains decoded SDRAM, but is not assigned as a DOS UMB.</li>
+            </ul>
+          </article>
+
+          <article class="feature-card" data-label="I/O">
+            <h3>Storage and ROM</h3>
+            <ul>
+              <li>Two floppy drives using compatible images.</li>
+              <li>Two IDE targets and second SD-card support.</li>
+              <li>XTIDE for hard-disk images.</li>
+              <li>Separate slots for the main BIOS, EC00h BIOS and EGA BIOS.</li>
+              <li>Selectable ROM writing for development.</li>
+            </ul>
+          </article>
+
+          <article class="feature-card" data-label="SND">
+            <h3>Audio</h3>
+            <ul>
+              <li>Internal PC speaker.</li>
+              <li>AdLib OPL2 through JTOPL.</li>
+              <li>Creative Music System / Game Blaster.</li>
+              <li>Volume, boost and stereo-mix controls from the OSD.</li>
+            </ul>
+          </article>
+
+          <article class="feature-card" data-label="JOY">
+            <h3>Input</h3>
+            <ul>
+              <li>Two analogue or digital joysticks.</li>
+              <li>Optional joystick synchronisation with CPU speed.</li>
+              <li>Joystick swapping from the menu.</li>
+              <li>Microsoft-compatible mouse through COM1.</li>
+            </ul>
+          </article>
+
+          <article class="feature-card" data-label="VID">
+            <h3>MiSTer output</h3>
+            <ul>
+              <li>Scandoubler and HQ2x/CRT effects.</li>
+              <li>Aspect-ratio adjustment.</li>
+              <li>Sync position and width corrections.</li>
+              <li>Full-colour, green, amber, monochrome and tinted display modes.</li>
+              <li>Optional composite output, depending on the integration.</li>
+            </ul>
+          </article>
+        </div>
+
+        <h3>Effective 8088 memory map</h3>
+        <p>
+          The 8088 sees one 1 MiB physical address space. With the default UMB
+          and EMS options enabled, its regions have the following ownership;
+          ROM rows describe the normal state after their images are loaded.
+        </p>
+        <div class="memory-map-visual">
+          <svg viewBox="0 0 1120 560" role="img" aria-labelledby="memory-map-title memory-map-desc">
+            <title id="memory-map-title">PCXT core physical memory map</title>
+            <desc id="memory-map-desc">
+              A proportional overview of the full 1 MiB 8088 address space and an
+              enlarged map of its upper 384 KiB. It identifies conventional SDRAM,
+              video memory, EGA and system ROMs, the C400h UMB, the D000h EMS
+              page frame, and directly decoded SDRAM at E000h.
+            </desc>
+            <defs>
+              <pattern id="sdram-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <line x1="0" y1="0" x2="0" y2="8" stroke="var(--subtle)" stroke-width="2" opacity="0.45" />
+              </pattern>
+            </defs>
+
+            <text x="86" y="42" class="heading">Complete address space</text>
+            <text x="86" y="62" class="caption">1 MiB physical map · proportional view</text>
+            <rect x="112" y="88" width="196" height="410" rx="9" class="frame" />
+            <rect x="113" y="89" width="194" height="154" rx="8" class="block-video block" />
+            <rect x="113" y="243" width="194" height="254" rx="0" class="block-conventional block" />
+            <line x1="113" y1="243" x2="307" y2="243" class="separator" />
+            <text x="210" y="164" text-anchor="middle" class="block-label">Upper 384 KiB</text>
+            <text x="210" y="183" text-anchor="middle" class="detail">video · ROM · UMB · EMS</text>
+            <text x="210" y="363" text-anchor="middle" class="block-label">Conventional SDRAM</text>
+            <text x="210" y="382" text-anchor="middle" class="detail">640 KiB</text>
+            <text x="98" y="98" text-anchor="end" class="address">FFFFFh</text>
+            <text x="98" y="248" text-anchor="end" class="address">A0000h</text>
+            <text x="98" y="497" text-anchor="end" class="address">00000h</text>
+
+            <path d="M 329 166 C 415 166, 438 145, 496 145 L 568 145" class="connector" />
+            <text x="396" y="132" text-anchor="middle" class="caption">expanded at right</text>
+
+            <text x="600" y="42" class="heading">Upper memory detail</text>
+            <text x="600" y="62" class="caption">A0000h-FFFFFh · 384 KiB · top address at the top</text>
+            <rect x="704" y="88" width="296" height="384" rx="9" class="frame" />
+
+            <rect x="705" y="89" width="294" height="64" rx="8" class="block-rom block" />
+            <text x="720" y="118" class="block-label">Main system BIOS</text>
+            <text x="720" y="138" class="detail">64 KiB · F0000h-FFFFFh</text>
+
+            <rect x="705" y="153" width="294" height="16" class="block-rom block" />
+            <text x="720" y="165" class="block-label-small">XTIDE option ROM · 16 KiB</text>
+
+            <rect x="705" y="169" width="294" height="48" class="block-direct block" />
+            <text x="720" y="191" class="block-label">Directly decoded SDRAM</text>
+            <text x="720" y="208" class="detail">48 KiB · E0000h-EBFFFh · not in the UMB chain</text>
+
+            <rect x="705" y="217" width="294" height="64" class="block-ems block" />
+            <line x1="705" y1="233" x2="999" y2="233" class="separator" />
+            <line x1="705" y1="249" x2="999" y2="249" class="separator" />
+            <line x1="705" y1="265" x2="999" y2="265" class="separator" />
+            <text x="720" y="240" class="block-label-small">EMS page frame · D0000h-DFFFFh · 4 × 16 KiB banks</text>
+            <text x="720" y="273" class="detail">OSD-gated; each bank responds only when mapped</text>
+
+            <rect x="705" y="281" width="294" height="48" class="block-umb block" />
+            <text x="720" y="303" class="block-label">Optional SDRAM-backed UMB</text>
+            <text x="720" y="320" class="detail">48 KiB · C4000h-CFFFFh · enabled in the OSD</text>
+
+            <rect x="705" y="329" width="294" height="16" class="block-rom block" />
+            <text x="720" y="341" class="block-label-small">EGA option ROM · C0000h-C3FFFh · 16 KiB</text>
+
+            <rect x="705" y="345" width="294" height="126" rx="0" class="block-video block" />
+            <line x1="705" y1="408" x2="999" y2="408" class="separator" />
+            <text x="720" y="380" class="block-label">Video memory</text>
+            <text x="720" y="399" class="detail">A0000h-BFFFFh · 128 KiB reserved for EGA / VGA</text>
+            <text x="720" y="430" class="detail">A0000h-AFFFFh · 64 KiB · EGA / VGA mode 13h</text>
+            <text x="720" y="451" class="detail">B0000h-BFFFFh · 64 KiB · selectable EGA apertures</text>
+
+            <text x="685" y="97" text-anchor="end" class="address">FFFFFh</text>
+            <text x="685" y="166" text-anchor="end" class="address">EC000h</text>
+            <text x="685" y="214" text-anchor="end" class="address">E0000h</text>
+            <text x="685" y="278" text-anchor="end" class="address">D0000h</text>
+            <text x="685" y="326" text-anchor="end" class="address">C4000h</text>
+            <text x="685" y="342" text-anchor="end" class="address">C0000h</text>
+            <text x="685" y="469" text-anchor="end" class="address">A0000h</text>
+
+            <g transform="translate(86 526)">
+              <rect x="0" y="-11" width="15" height="15" rx="3" class="block-conventional block" />
+              <text x="23" y="1" class="caption">Conventional SDRAM</text>
+              <rect x="184" y="-11" width="15" height="15" rx="3" class="block-video block" />
+              <text x="207" y="1" class="caption">Video / EMS</text>
+              <rect x="332" y="-11" width="15" height="15" rx="3" class="block-umb block" />
+              <text x="355" y="1" class="caption">Optional UMB</text>
+              <rect x="481" y="-11" width="15" height="15" rx="3" class="block-rom block" />
+              <text x="504" y="1" class="caption">ROM</text>
+              <rect x="578" y="-11" width="15" height="15" rx="3" class="block-direct block" />
+              <text x="601" y="1" class="caption">SDRAM, not a UMB</text>
+            </g>
+          </svg>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Address range</th>
+                <th>Size</th>
+                <th>Core assignment</th>
+                <th>DOS availability</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><code>00000h-9FFFFh</code></td><td>640 KiB</td><td>Conventional SDRAM</td><td>Conventional memory</td></tr>
+              <tr><td><code>A0000h-AFFFFh</code></td><td>64 KiB</td><td>EGA aperture and VGA mode 13h framebuffer</td><td>Reserved for video</td></tr>
+              <tr><td><code>B0000h-B7FFFh</code></td><td>32 KiB</td><td>Selectable EGA monochrome aperture</td><td>Reserved for video</td></tr>
+              <tr><td><code>B8000h-BFFFFh</code></td><td>32 KiB</td><td>Selectable EGA colour/text aperture</td><td>Reserved for video</td></tr>
+              <tr><td><code>C0000h-C3FFFh</code></td><td>16 KiB</td><td>EGA option ROM</td><td>Reserved for EGA BIOS</td></tr>
+              <tr><td><code>C4000h-CFFFFh</code></td><td>48 KiB</td><td>Optional SDRAM-backed UMB</td><td>UMB when enabled in the OSD</td></tr>
+              <tr><td><code>D0000h-D3FFFh</code></td><td>16 KiB</td><td>EMS page-frame bank 0</td><td>EMS bank 0 when enabled and mapped; otherwise unmapped</td></tr>
+              <tr><td><code>D4000h-D7FFFh</code></td><td>16 KiB</td><td>EMS page-frame bank 1</td><td>EMS bank 1 when enabled and mapped; otherwise unmapped</td></tr>
+              <tr><td><code>D8000h-DBFFFh</code></td><td>16 KiB</td><td>EMS page-frame bank 2</td><td>EMS bank 2 when enabled and mapped; otherwise unmapped</td></tr>
+              <tr><td><code>DC000h-DFFFFh</code></td><td>16 KiB</td><td>EMS page-frame bank 3</td><td>EMS bank 3 when enabled and mapped; otherwise unmapped</td></tr>
+              <tr><td><code>E0000h-EBFFFh</code></td><td>48 KiB</td><td>Directly decoded SDRAM</td><td>Not registered as UMB by the supplied DOS configuration</td></tr>
+              <tr><td><code>EC0000h-EFFFFh</code></td><td>16 KiB</td><td>XTIDE option ROM</td><td>Reserved when an XTIDE ROM is loaded</td></tr>
+              <tr><td><code>F0000h-FFFFFh</code></td><td>64 KiB</td><td>Main system BIOS</td><td>Reserved for system BIOS</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          EGA can select an <code>A0000h-BFFFFh</code>, <code>A0000h-AFFFFh</code>,
+          <code>B0000h-B7FFFh</code> or <code>B8000h-BFFFFh</code> aperture through
+          its graphics controller. The whole A/B region is therefore reserved for
+          video, regardless of the current EGA map. VGA mode 13h owns
+          <code>A0000h-AFFFFh</code> while active.
+        </p>
+        <p>
+          The supplied DOS configuration registers only <code>C400h-CFFFh</code>
+          with <code>USE!UMBS.SYS</code>. The E000h block is kept out of the UMB
+          chain because it is separated by the D000h EMS frame; treating the
+          whole C400h-EC00h interval as one UMB would collide with EMS.
+        </p>
+        <p>
+          The <em>2MB EMS D000-DFFF</em> OSD option gates the D000h page frame
+          as a whole. With it disabled, <code>D0000h-DFFFFh</code> is unmapped.
+          With it enabled, each 16 KiB bank responds only after its corresponding
+          EMS page register has been mapped.
+        </p>
+
+        <div class="callout">
+          <div class="callout-mark">✓</div>
+          <div>
+            <strong>Two fixes at the fastest CPU setting</strong>
+            <p>
+              The former intermittent memory fault at <em>PC/AT 3.5 MHz</em> was
+              caused by the 8088 write pulse ending before a refresh-induced wait
+              could reach the CPU. RAM now retains an accepted address and byte
+              until the SDRAM write completes. A regression covers every clock of
+              the refresh sequence at addresses throughout conventional memory,
+              including the IBM BIOS IRQ flag at <code>0046Bh</code>, and also
+              checks tight consecutive writes. RTL simulation passes;
+              Supersoft <em>SLOW REFRESH</em> has also been confirmed error-free
+              on MiSTer hardware.
+            </p>
+            <p>
+              The IBM 5160 BIOS dated <code>11/08/82</code> also printed
+              <code>101</code> before the memory count at that same speed,
+              independently of the memory fault: the 8088 core recognized
+              <code>INTR</code> asynchronously instead of only at instruction
+              boundaries, which could race the POST's PIC/PIT hot-interrupt
+              check. The core now samples <code>INTR</code> synchronously at
+              each instruction boundary, and hardware testing confirms the POST
+              completes without <code>101</code> at maximum speed.
+            </p>
+            <p>
+              This <code>INTR</code>-sampling defect is not new. It was fixed
+              once already, years earlier, and the fix was silently lost when
+              the CPU core was resynced from its upstream source — well before
+              the EGA work, and before this build's own maximum-speed baseline.
+              Being a genuine race between two asynchronous events rather than
+              a missing feature, the regression stayed dormant without a visible
+              symptom until unrelated timing changes elsewhere in the design
+              shifted the CPU's cycle-by-cycle timing enough to land inside the
+              failure window. The EGA work did not introduce this defect; it
+              exposed one that had already been present, silently, for a long
+              time.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="configuration">
+        <header class="section-header">
+          <div class="section-number">06</div>
+          <div>
+            <p class="eyebrow">Effective configuration</p>
+            <h2>OSD and build options</h2>
+          </div>
+        </header>
+
+        <p class="section-intro">
+          The menu retains the user's practical configuration choices, but no
+          longer selects between competing graphics adapters: EGA is always the
+          main video path.
+        </p>
+
+        <div class="panel">
+          <h3>Features enabled in <code>config.tcl</code></h3>
+          <div class="chips"><span class="chip">ENABLE_OPL2</span><span class="chip">ENABLE_CMS</span><span class="chip">ENABLE_EMS</span><span class="chip">ENABLE_UMB</span></div>
+
+          <div class="table-wrap" style="margin-top: 22px">
+            <table>
+              <thead>
+                <tr>
+                  <th>OSD group</th>
+                  <th>Main available options</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>System and BIOS</td>
+                  <td>Splash, main BIOS, EC00, EGA BIOS and write control.</td>
+                </tr>
+                <tr>
+                  <td>Disks</td>
+                  <td>FDD A/B, write protection, IDE 0-0, IDE 0-1 and second SD.</td>
+                </tr>
+                <tr>
+                  <td>CPU</td>
+                  <td>4.77 MHz, 7.16 MHz, 9.54 MHz and fast PC/AT mode.</td>
+                </tr>
+                <tr>
+                  <td>Audio and video</td>
+                  <td>C/MS, OPL2, speaker, mixing, CRT offsets, timing, effects, aspect ratio and VGA Mode 13h.</td>
+                </tr>
+                <tr>
+                  <td>Hardware</td>
+                  <td>2 MiB EMS at D000h-DFFFh, UMB at C400h-CFFFh, two joysticks and synchronisation options.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="startup">
+        <header class="section-header">
+          <div class="section-number">07</div>
+          <div>
+            <p class="eyebrow">Getting started</p>
+            <h2>BIOS, ROM and startup</h2>
+          </div>
+        </header>
+
+        <div class="split">
+          <div class="panel">
+            <h3>Recommended startup path</h3>
+            <ol>
+              <li>Copy the contents of <code>games/PCXT</code> to the MiSTer SD card.</li>
+              <li>Extract the bundled FreeDOS image.</li>
+              <li>Select the core in <strong>Computers / PCXT</strong>.</li>
+              <li>Choose the IBM PCXT model and a CPU speed.</li>
+              <li>Mount <code>FreeDOS_HD.img</code> as the HDD image.</li>
+              <li>Select a compatible BIOS, such as Micro8088.</li>
+              <li>Run <strong>Reset &amp; apply settings</strong>.</li>
+            </ol>
+          </div>
+
+          <div class="panel">
+            <h3>Firmware options</h3>
+            <ul class="plain-list">
+              <li>Scripts in <code>SW/ROMs/</code> build ROMs from IBM 5160 or Juko ST sources.</li>
+              <li>Open PCXT31 and Micro8088 BIOS options with integrated XTIDE.</li>
+              <li>Additional XTIDE of up to 16 KiB at EC00h.</li>
+              <li>Floppy compatibility depends on the BIOS in use.</li>
+              <li>Current VGA mode 13h support requires the TSR to be loaded from DOS.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="callout warning">
+          <div class="callout-mark">!</div>
+          <div>
+            <strong>The BIOS determines part of floppy compatibility</strong>
+            <p>
+              IBM 5160 works reliably with 360 KiB images; Micro8088 normally
+              supports 720 KiB and 1.44 MiB. Smaller images may need to be
+              preformatted.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="future">
+        <header class="section-header">
+          <div class="section-number">08</div>
+          <div>
+            <p class="eyebrow">Future work</p>
+            <h2>Possible EGA improvements</h2>
+          </div>
+        </header>
+
+        <p class="section-intro">
+          The core is already functional for its intended use. Comparing its
+          EGA path against the mature <a href="https://github.com/86box/86box" target="_blank" rel="noopener noreferrer">86Box</a>
+          implementation surfaced a handful of register-edge behaviours worth
+          closing; all of them are now implemented, as noted below.
+        </p>
+
+        <div class="callout">
+          <div class="callout-mark">✓</div>
+          <div>
+            <strong>Delivered since this list was first written</strong>
+            <p>
+              Authentic EGA clock selection is done — both dot clocks are
+              implemented and selected per mode from Miscellaneous Output bit 2.
+              Horizontal Pel Panning and Line Compare, the two register
+              behaviours this list originally called out, are implemented and
+              covered by regression benches; both are described in the video
+              section.
+            </p>
+          </div>
+        </div>
+
+        <div class="callout warning">
+          <div class="callout-mark">!</div>
+          <div>
+            <strong>Compatibility first, not feature expansion</strong>
+            <p>
+              This roadmap is about making the existing EGA model more faithful.
+              It does not imply a move towards VGA, VBE, SVGA or additional video
+              adapters.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="scope">
+        <header class="section-header">
+          <div class="section-number">09</div>
+          <div>
+            <p class="eyebrow">Scope</p>
+            <h2>What this core does and does not claim</h2>
+          </div>
+        </header>
+
+        <div class="split">
+          <div class="panel">
+            <h3>Explicit goals</h3>
+            <ul class="check-list">
+              <li>Recreate a reliable PC/XT on MiSTer.</li>
+              <li>Keep EGA as the sole owner of normal video.</li>
+              <li>Run compatible CGA software through EGA.</li>
+              <li>Offer a packed mode 13h for common DOS software.</li>
+              <li>Keep the architecture understandable and verifiable.</li>
+            </ul>
+          </div>
+
+          <div class="panel">
+            <h3>Outside the current goal</h3>
+            <ul class="plain-list">
+              <li>Active HGC or Tandy hardware in this variant.</li>
+              <li>Dynamic switching between video cards.</li>
+              <li>General VGA or SVGA compatibility.</li>
+              <li>VBE, Mode X and undocumented VGA extensions.</li>
+              <li>Guaranteed compatibility with every BIOS or game.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="callout">
+          <div class="callout-mark">→</div>
+          <div>
+            <strong>Technical direction</strong>
+            <p>
+              The distinctive value is reducing legacy paths without losing the
+              historical software that a real EGA can run. VGA mode 13h is added
+              as a bounded extension: it takes ownership of the display only in
+              mode 13h, and outside it contributes only the DAC.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="credits">
+        <header class="section-header">
+          <div class="section-number">10</div>
+          <div>
+            <p class="eyebrow">Open project</p>
+            <h2>Credits and licence</h2>
+          </div>
+        </header>
+
+        <div class="panel">
+          <p>
+            MiSTer port and continued project development by <strong>spark2k06</strong>,
+            built on important contributions from the FPGA recreation and classic
+            PC preservation community.
+          </p>
+
+          <p>
+            The 8088 CPU comes from the <strong>MCL86</strong> project by
+            MicroCoreLabs and the chipset from <strong>KFPC-XT</strong> by
+            kitune-san. The EGA and VGA mode 13h behaviour is modelled on the
+            video emulation in <strong>86Box</strong>. AdLib sound uses
+            <strong>JTOPL</strong> by Jose Tejada. Earlier releases used the
+            <strong>Graphics Gremlin</strong> CGA and Hercules adapters by
+            TubeTimeUS, since replaced by the EGA path. Splash artwork by
+            <strong>mills32</strong>.
+          </p>
+
+          <p>
+            The repository is licensed under the
+            <strong>GNU General Public License, version 3</strong>. Redistribution
+            and modification must comply with that licence and the terms that
+            apply to the integrated components.
+          </p>
+
+        </div>
+      </section>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <span>PCXT for MiSTer FPGA · Technical report</span>
+      <span>EGA core with optional VGA mode 13h</span>
+    </div>
+  </footer>
+
+  <script>
+    (() => {
+      const root = document.documentElement;
+      const themeToggle = document.getElementById("theme-toggle");
+      const progressBar = document.getElementById("progress-bar");
+      const navLinks = [...document.querySelectorAll(".toc a")];
+      const sections = [...document.querySelectorAll(".section")];
+
+      const storedTheme = localStorage.getItem("pcxt-report-theme");
+      if (storedTheme === "light" || storedTheme === "dark") {
+        root.dataset.theme = storedTheme;
+      }
+
+      themeToggle.addEventListener("click", () => {
+        const nextTheme = root.dataset.theme === "dark" ? "light" : "dark";
+        root.dataset.theme = nextTheme;
+        localStorage.setItem("pcxt-report-theme", nextTheme);
+      });
+
+      const updateProgress = () => {
+        const scrollTop = window.scrollY;
+        const scrollRange =
+          document.documentElement.scrollHeight - window.innerHeight;
+        const progress = scrollRange > 0 ? scrollTop / scrollRange : 0;
+        progressBar.style.width = `${Math.min(100, progress * 100)}%`;
+      };
+
+      const observer = new IntersectionObserver(
+        entries => {
+          const visible = entries
+            .filter(entry => entry.isIntersecting)
+            .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+
+          if (!visible) {
+            return;
+          }
+
+          navLinks.forEach(link => {
+            link.classList.toggle(
+              "active",
+              link.getAttribute("href") === `#${visible.target.id}`
+            );
+          });
+        },
+        {
+          rootMargin: "-18% 0px -62% 0px",
+          threshold: [0.05, 0.2, 0.5]
+        }
+      );
+
+      sections.forEach(section => observer.observe(section));
+      window.addEventListener("scroll", updateProgress, { passive: true });
+      updateProgress();
+    })();
+  </script>
+
+
+</body></html>
