@@ -295,6 +295,7 @@ module emu
     wire ega_dot_toggle;
     wire ega_dot_clock_sel;
     wire ega_scandouble_active;
+    wire ega_vmode_toggle;
     wire [1:0] buttons;
     wire [63:0] status;
     wire vga_mode13_osd = status[29];
@@ -362,6 +363,7 @@ module emu
 		.buttons(buttons),
 		.status(status),
 		.status_menumask(status_menumask),
+		.new_vmode(ega_vmode_toggle),
 
 		.uart_mode(uart_mode),
 
@@ -1112,6 +1114,7 @@ module emu
 		.ega_dot_toggle                     (ega_dot_toggle),
 		.ega_dot_clock_sel                  (ega_dot_clock_sel),
 		.ega_scandouble_active              (ega_scandouble_active),
+		.ega_vmode_toggle_out               (ega_vmode_toggle),
 		.crt_h_offset                       (status[49:46]),
 		.crt_v_offset                       (status[52:50]),
 		.vsync_width_osd                    (vsync_width_osd),

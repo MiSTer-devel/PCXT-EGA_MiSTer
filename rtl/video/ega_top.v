@@ -72,6 +72,9 @@ module ega_top(
     output ega_dot_toggle_out,
     output ega_dot_clock_sel_out,
     output ega_scandouble_active_out,
+    // Toggles once after a software-programmed timing/mode change reaches
+    // vertical blank.  MiSTer uses this to re-evaluate its video_mode mapping.
+    output reg ega_vmode_toggle_out,
     input splashscreen,
     input thin_font,
     input scandouble_en,
@@ -845,6 +848,7 @@ module ega_top(
     wire ega_vsync = ~ega_vsync_out_l;
     wire [5:0] ega_video_selected = ega_scandouble_active ? ega_dbl_color : ega_color_raw;
     wire ega_vblank_rise = ~ega_vblank_q & ega_visible_vblank;
+    reg ega_vmode_pending;
     assign vga_dac_sample_index = vga_mode13_active ? vga_renderer_dac_index
                                                        : {2'b00, ega_video_selected};
 
@@ -907,6 +911,8 @@ module ega_top(
         if (reset) begin
             ega_vblank_q <= 1'b0;
             ega_cfg_toggle <= 1'b0;
+            ega_vmode_toggle_out <= 1'b0;
+            ega_vmode_pending <= 1'b0;
             ega_status_read_q <= 1'b0;
             ega_status_toggle <= 2'b00;
             ega_vblank_crtc_q <= 1'b0;
@@ -952,18 +958,30 @@ module ega_top(
             vga_dac_data_write_q <= vga_dac_data_write_raw;
             ega_vblank_crtc_q <= ega_crtc_fetch_tick ? ega_vert_blank_active_crtc : ega_vblank_crtc_q;
             cpu_mem_write_evt_d <= cpu_mem_write_evt;
-            if (ega_misc_write_cs && ega_io_we)
+            if (ega_misc_write_cs && ega_io_we) begin
                 ega_misc_output_reg <= bus_d;
+                ega_vmode_pending <= 1'b1;
+            end
             if (ega_crtc_cs && ega_io_we && !bus_a[0])
                 ega_crtc_index_shadow <= bus_d[4:0];
             else if (ega_crtc_cs && ega_io_we && bus_a[0]) begin
                 case (ega_crtc_index_shadow)
-                    5'h00, 5'h01, 5'h02: ega_crtc_h_timing_seen <= 1'b1;
-                    5'h04, 5'h06, 5'h07, 5'h10, 5'h12: ega_crtc_v_timing_seen <= 1'b1;
+                    5'h00, 5'h01, 5'h02: begin
+                        ega_crtc_h_timing_seen <= 1'b1;
+                        ega_vmode_pending <= 1'b1;
+                    end
+                    5'h03: ega_vmode_pending <= 1'b1;
+                    5'h04, 5'h06, 5'h07, 5'h10, 5'h12: begin
+                        ega_crtc_v_timing_seen <= 1'b1;
+                        ega_vmode_pending <= 1'b1;
+                    end
+                    5'h05, 5'h09: ega_vmode_pending <= 1'b1;
                     default: begin
                     end
                 endcase
             end
+            if (vga_mode13_enter || vga_mode13_exit)
+                ega_vmode_pending <= 1'b1;
             if (ega_cfg_we)
                 ega_cfg_toggle <= ~ega_cfg_toggle;
             if (ega_status_read && !ega_status_read_q)
@@ -995,6 +1013,10 @@ module ega_top(
                 end
 
                 if (ega_vblank_rise) begin
+                    if (ega_vmode_pending) begin
+                        ega_vmode_toggle_out <= ~ega_vmode_toggle_out;
+                        ega_vmode_pending <= 1'b0;
+                    end
                     if (ega_crtc_timing_ready & ega_video_pending & ~ega_write_seen_since_vblank & ~cpu_mem_write_stretched) begin
                         ega_video_active <= 1'b1;
                         ega_video_pending <= 1'b0;
