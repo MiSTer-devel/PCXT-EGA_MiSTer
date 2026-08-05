@@ -140,11 +140,14 @@ module ega_top(
     wire ce_pix_2x;
     wire ega_dot_toggle;
     wire ega_hifreq_mode;
+    wire ega_crtc_line_reset;
+    wire ega_dot_line_lock;
 
     ega_dot_clock ega_dot_clock_inst (
         .clk            (clk),
         .reset          (reset),
         .clock_select   (ega_hifreq_mode),
+        .line_lock      (ega_dot_line_lock),
         .ce_dot         (ce_pix),
         .ce_dot_early   (ce_pix_early),
         .ce_dot_2x      (ce_pix_2x),
@@ -405,6 +408,11 @@ module ega_top(
 
     wire ega_crtc_fetch_tick = (!ega_graphics_mode_active && (ega_splash_active || ega_char_9dot_active)) ? ega_text_fetch_tick :
                                                                                                           ega_ce_crt_fetch;
+
+    // line_reset is a level for the final character of a line. Qualifying it
+    // with the one-cycle CRTC character tick produces one phase-lock pulse on
+    // the emitted dot that advances the CRTC to the next line.
+    assign ega_dot_line_lock = ega_crtc_fetch_tick & ega_crtc_line_reset;
     wire [1:0] ega_render_mode = !ega_graphics_mode_active ? 2'd0 :
                                   ega_compat_2bpp_mode ? 2'd2 : 2'd1;
     wire ega_display_enable = ega_display_enable_crtc;
@@ -563,7 +571,7 @@ module ega_top(
         .DO(ega_crtc_data_out),
         .hblank(ega_hblank_crtc),
         .vblank(ega_vblank_crtc),
-        .line_reset(),
+        .line_reset(ega_crtc_line_reset),
         .VSYNC(ega_vsync_l),
         .HSYNC(ega_hsync_int),
         .DE(ega_display_enable_crtc),
