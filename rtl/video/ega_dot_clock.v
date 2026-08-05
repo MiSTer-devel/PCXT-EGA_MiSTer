@@ -10,10 +10,13 @@
 //
 //  clk is the video clock, 315/11 MHz = 28.636363 MHz.  The 14.318181 MHz
 //  clock is an exact divide by two.  16.257 MHz is not an integer fraction of
-//  it, so it is produced by an accumulator whose long term average is exact:
+//  it, so it is produced by an accumulator with this exact free-running ratio:
 //
 //    16_257_000 / (315_000_000/11) = 59_609 / 105_000   (gcd reduced)
 //
+//  The high-frequency phase is restarted once per CRTC line. That rounds each
+//  line to a whole clk period, but makes its physical dot-width pattern and
+//  sync position repeat instead of drifting from one scanline to the next.
 //============================================================================
 
 `default_nettype wire
@@ -28,6 +31,9 @@ module ega_dot_clock #(
     input  wire clk,
     input  wire reset,
     input  wire clock_select,   // Miscellaneous Output bit 2
+    // Asserted with ce_dot once per CRTC line. The NCO phase is restarted
+    // after that dot so every line uses the same physical dot-width pattern.
+    input  wire line_lock,
     output wire ce_dot,         // one pulse per dot
     output wire ce_dot_early,   // one clock before ce_dot
     output wire ce_dot_2x,      // twice the dot rate, valid when clock_select == 0
@@ -70,6 +76,13 @@ module ega_dot_clock #(
                 // emitted across the boundary.
                 div2   <= 1'b0;
                 acc    <= {ACC_W{1'b0}};
+                ce_nco <= 1'b0;
+            end else if (clock_select && line_lock) begin
+                // line_lock coincides with an emitted dot. Seed the state one
+                // NCO step past zero: the next dot then remains two clocks
+                // away, rather than acquiring a malformed three-clock gap.
+                div2   <= ~div2;
+                acc    <= NCO_INC[ACC_W-1:0];
                 ce_nco <= 1'b0;
             end else begin
                 div2   <= ~div2;
