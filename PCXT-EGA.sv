@@ -278,7 +278,20 @@ module emu
 		"P3OPQ,Joystick 2, Analog, Digital, Disabled;",
 		"P3OR,Sync Joy to CPU Speed,No,Yes;",
 		"P3OS,Swap Joysticks,No,Yes;",
-		"P3-;",	
+		"P3-;",
+		"P3O6,USER I/O,MT32-pi,COM2;",
+		"P3-;",
+		"h3P4,MT32-pi;",
+		"h3P4-;",
+		"h3P4OD,Use MT32-pi,Yes,No;",
+		"h3P4-;",
+		"h3P4r8,Reset Hanging Notes;",
+		"h3P4o9,MT32-pi Mode,MT-32,General MIDI;",
+		"h3P4O34,MT32-pi ROM,MT-32 v1,MT-32 v2,CM-32L,Reserved;",
+		"h3P4oSU,MT32-pi SoundFont,#0,#1,#2,#3,#4,#5,#6,#7;",
+		"h3P4-;",
+		"h3P4o23,MT32-pi Volume,100%,50%,25%,12%;",
+		"h3P4-;",
 		"-;",
 		"R0,Reset & apply settings;",
 		"J,Fire 1,Fire 2;",
@@ -329,7 +342,8 @@ module emu
     reg [1:0]   scale_video_ff;
     reg [2:0]   screen_mode_video_ff;
     wire        video_scandoubler_en = (scale_video_ff > 0) || forced_scandoubler;
-    wire [15:0] status_menumask = {12'd0, 2'b11, status[5]};
+    // bit0=status[5], bits2:1=2'b11 (pre-existing), bit3=mt32_available.
+    wire [15:0] status_menumask = {11'd0, mt32_available, 2'b11, status[5]};
 
     wire VGA_VBlank_border;
     wire std_hsyncwidth;
@@ -1058,6 +1072,9 @@ module emu
 		.uart2_dsr_n                        (uart_dsr),
 		.uart2_rts_n                        (uart_rts),
 		.uart2_dtr_n                        (uart_dtr),
+		.clk_midi                           (clk_midi_en),
+		.midi_rx                            (mt32_midi_rx),
+		.midi_tx                            (mt32_midi_tx),
 		.enable_sdram                       (1'b1),
 		.initilized_sdram                   (initilized_sdram),
 		.sdram_clock                        (SDRAM_CLK),
@@ -1185,7 +1202,7 @@ module emu
     begin
         reg [16:0] tmp_l;
 
-        tmp_l <= jtopl2_snd + cms_l_snd + spk_vol;
+        tmp_l <= jtopl2_snd + cms_l_snd + spk_vol + mt32_l_snd;
 
         // clamp the output
         out_l <= (^tmp_l[16:15]) ? {tmp_l[16], {15{tmp_l[15]}}} : tmp_l[15:0];
@@ -1199,7 +1216,7 @@ module emu
     begin
         reg [16:0] tmp_r;
 
-        tmp_r <= jtopl2_snd + cms_r_snd + spk_vol;
+        tmp_r <= jtopl2_snd + cms_r_snd + spk_vol + mt32_r_snd;
 
         // clamp the output
         out_r <= (^tmp_r[16:15]) ? {tmp_r[16], {15{tmp_r[15]}}} : tmp_r[15:0];
@@ -1236,6 +1253,28 @@ module emu
     logic clk_uart_en;
     logic clk_uart2_en;
     logic [2:0] clk_uart2_counter;
+
+    // MIDI baud reference for the MPU-401. Derived straight from the 50MHz
+    // clk_chipset rather than the 14.318MHz UART reference, because 50MHz
+    // divides exactly: 50e6 / (4 * 16 * 25) = 31250 baud, zero error.
+    // (The 14.318MHz path can only reach 30858 baud, -1.25%.) ao486 likewise
+    // feeds its MPU a dedicated exact-rate clock instead of the COM reference.
+    logic [1:0] clk_midi_counter = 2'd0;
+    logic       clk_midi_en = 1'b0;
+
+    always @(posedge clk_chipset)
+    begin
+        if (clk_midi_counter == 2'd3)
+        begin
+            clk_midi_counter <= 2'd0;
+            clk_midi_en      <= 1'b1;
+        end
+        else
+        begin
+            clk_midi_counter <= clk_midi_counter + 2'd1;
+            clk_midi_en      <= 1'b0;
+        end
+    end
 
     always @(posedge clk_chipset)
     begin
@@ -1281,7 +1320,20 @@ module emu
 
     /// UART2
 
-    assign USER_OUT = {1'b1, 1'b1, uart2_dtr, 1'b1, uart2_rts, uart2_tx, 1'b1};
+    // USER_IO is time-shared between the COM2 passthrough (default) and the
+    // MT32-pi bridge below - only one can be connected at a time.
+    // Default (0) is MT32-pi, matching ao486: at core load, before the saved
+    // config arrives, we must already be in the safe non-driving state.
+    wire user_io_mt32 = ~status[6];
+
+    // The COM2-over-USER_IO path is dead code in this core: uart2_tx/rts/dtr have
+    // no driver, so they synthesise to constant 0 and would actively pull pins
+    // 1, 2 and 4 low. Pins 2 and 4 are *outputs* of an attached mt32-pi (I2S), so
+    // that is a direct output-vs-output contention, and pin 1 low is a permanent
+    // MIDI break. COM2 is also the power-on default before the saved config is
+    // applied, so this happened on every core load. Release the pins instead;
+    // ao486 never hits this because its COM2 signals are real and idle high.
+    assign USER_OUT = user_io_mt32 ? mt32_user_out : 7'h7F;
 
     //
     // Pin | USB Name |   |Signal
@@ -1297,10 +1349,90 @@ module emu
 
     wire uart2_tx, uart2_rts, uart2_dtr;
 
-    wire uart2_rx  = USER_IN[0];
-    wire uart2_cts = USER_IN[3];
-    wire uart2_dsr = USER_IN[5];
-    wire uart2_dcd = USER_IN[6];
+    wire uart2_rx  = user_io_mt32 | USER_IN[0];
+    wire uart2_cts = user_io_mt32 | USER_IN[3];
+    wire uart2_dsr = user_io_mt32 | USER_IN[5];
+    wire uart2_dcd = user_io_mt32 | USER_IN[6];
+
+    //
+    ////////////////////////////  MT32-pi  //////////////////////////////////
+    //
+    // Bridges the MPU-401 UART-mode MIDI interface (rtl/uart/mpu401.sv, wired
+    // through the chipset above) to an external mt32-pi device connected on
+    // USER_IO. See sys/mt32pi.sv for the wire protocol (MIDI serial + I2S
+    // audio in + I2C status/LCD mirror).
+    //
+
+    wire        mt32_disable  = status[13];
+    // Deliberately NOT reset_wire: that one stays asserted for the whole boot
+    // splash (~5s), which would hold the I2C slave silent long enough for the
+    // mt32-pi's I2C master to give up. Mirror ao486 and use only the genuine
+    // system/user resets.
+    wire        mt32_reset    = status[40] | RESET | status[0] | buttons[1];
+    wire        mt32_mode_req = status[41];
+    wire  [1:0] mt32_rom_req  = status[4:3];
+    wire  [7:0] mt32_sf_req   = {5'd0, status[62:60]};
+    wire  [1:0] mt32_vol_shift = status[35:34];
+
+    wire [15:0] mt32_i2s_r, mt32_i2s_l;
+    wire  [7:0] mt32_mode, mt32_rom, mt32_sf;
+    wire        mt32_lcd_en, mt32_lcd_pix, mt32_lcd_update;
+    wire        mt32_newmode;
+    wire        mt32_available;
+    // Gate on the user's explicit USER_IO selection, NOT on mt32_available.
+    // The I2C handshake is only an auto-detect convenience for the OSD; tying
+    // the audio path to it means a perfectly working mt32-pi stays silent
+    // whenever that handshake does not happen - which is exactly what we hit.
+    wire        mt32_use  = user_io_mt32 & ~mt32_disable;
+    wire        mt32_mute = user_io_mt32 &  mt32_disable;
+
+    wire  [6:0] mt32_user_out;
+    wire        mt32_midi_tx;         // driven by the CHIPSET's mpu401 instance
+    wire        mt32_pi_midi_rx;
+    wire        mt32_midi_rx = user_io_mt32 ? mt32_pi_midi_rx : 1'b1;
+
+    mt32pi mt32pi
+    (
+        .CLK_AUDIO       (CLK_AUDIO),
+
+        .CLK_VIDEO       (CLK_VIDEO),
+        .CE_PIXEL        (CE_PIXEL),
+        .VGA_VS          (VGA_VS),
+        .VGA_DE          (VGA_DE),
+
+        .USER_IN         (USER_IN),
+        .USER_OUT        (mt32_user_out),
+
+        .reset           (mt32_reset),
+        .midi_tx         (mt32_midi_tx | mt32_mute),
+        .midi_rx         (mt32_pi_midi_rx),
+
+        .mt32_i2s_r      (mt32_i2s_r),
+        .mt32_i2s_l      (mt32_i2s_l),
+
+        .mt32_available  (mt32_available),
+
+        .mt32_mode_req   (mt32_mode_req),
+        .mt32_rom_req    (mt32_rom_req),
+        .mt32_sf_req     (mt32_sf_req),
+
+        .mt32_mode       (mt32_mode),
+        .mt32_rom        (mt32_rom),
+        .mt32_sf         (mt32_sf),
+        .mt32_newmode    (mt32_newmode),
+
+        .mt32_lcd_en     (mt32_lcd_en),
+        .mt32_lcd_pix    (mt32_lcd_pix),
+        .mt32_lcd_update (mt32_lcd_update)
+    );
+
+    // Verilog concatenation results are always unsigned, so sign-extend into
+    // an explicitly `signed` wire before the arithmetic (sign-preserving)
+    // shift - shifting the raw concatenation would zero-fill instead.
+    wire signed [16:0] mt32_i2s_l_ext = {mt32_i2s_l[15], mt32_i2s_l};
+    wire signed [16:0] mt32_i2s_r_ext = {mt32_i2s_r[15], mt32_i2s_r};
+    wire [16:0] mt32_l_snd = mt32_use ? (mt32_i2s_l_ext >>> mt32_vol_shift) : 17'd0;
+    wire [16:0] mt32_r_snd = mt32_use ? (mt32_i2s_r_ext >>> mt32_vol_shift) : 17'd0;
 
     //
     ///////////////////////   MMC     ///////////////////////
