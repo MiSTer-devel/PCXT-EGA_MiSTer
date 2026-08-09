@@ -13,6 +13,9 @@
 `ifndef ENABLE_EMS
 `define ENABLE_EMS 0
 `endif
+`ifndef ENABLE_MIDI
+`define ENABLE_MIDI 1
+`endif
 
 module PERIPHERALS #(
         parameter ps2_over_time = 16'd1000,
@@ -100,6 +103,10 @@ module PERIPHERALS #(
         input   logic           uart2_dsr_n,
         output  logic           uart2_rts_n,
         output  logic           uart2_dtr_n,
+        // MPU-401 (MIDI / MT32-pi)
+        input   logic           clk_midi,
+        input   logic           midi_rx,
+        output  logic           midi_tx,
         // EMS
         input   logic           ems_enabled,
         input   logic   [1:0]   ems_address,
@@ -242,6 +249,11 @@ module PERIPHERALS #(
     wire    ega_mem_select          = ega_mem_select_raw && !vga_a000_select;
     wire    uart_chip_select        = (~address_enable_n && {address[15:3], 3'd0} == 16'h03F8);
     wire    uart2_chip_select       = (~address_enable_n && {address[15:3], 3'd0} == 16'h02F8);
+    // NOTE: deliberately no `iorq` term here, matching uart_chip_select above.
+    // This select is qualified by iorq_uart, which pulses on the *trailing* edge
+    // of io_write_n - by then iorq has already dropped, so including it would
+    // gate away every write.
+    wire    mpu401_chip_select      = `ENABLE_MIDI ? (~address_enable_n && address[15:1] == (16'h0330 >> 1)) : 1'b0; // 0x330 .. 0x331 (MPU-401 UART mode)
     wire    lpt_chip_select         = (iorq && ~address_enable_n && address[15:1] == (16'h0378 >> 1)); // 0x378 ... 0x379
 	 wire    lpt_ctrl_select         = (iorq && ~address_enable_n && address[15:0] == 16'h037A); // 0x37A
     wire    xtctl_chip_select       = (iorq && ~address_enable_n && address[15:0] == 16'h8888);
@@ -326,6 +338,7 @@ module PERIPHERALS #(
     logic           uart_interrupt;
     logic           fdd_interrupt;
     logic           uart2_interrupt;
+    logic           mpu_interrupt;
     logic   [7:0]   interrupt_data_bus_out;
     logic           interrupt_to_cpu_buf;
 
@@ -355,7 +368,7 @@ module PERIPHERALS #(
                                         interrupt_request[5],
                                         uart_interrupt,
                                         uart2_interrupt,
-                                        interrupt_request[2],
+                                        mpu_interrupt,
                                         keybord_interrupt,
                                         timer_interrupt})
     );
@@ -452,6 +465,7 @@ module PERIPHERALS #(
     logic           keybord_irq;
     logic           uart_irq;
     logic           uart2_irq;
+    logic           mpu_irq;
     logic   [7:0]   keycode_buf;
     logic   [7:0]   keycode;
     logic           prev_ps2_reset;
@@ -700,6 +714,7 @@ end
     logic   keybord_interrupt_ff;
     logic   uart_interrupt_ff;
     logic   uart2_interrupt_ff;
+    logic   mpu_interrupt_ff;
     always_ff @(posedge clock, posedge reset)
     begin
         if (reset)
@@ -710,6 +725,8 @@ end
             uart_interrupt          <= 1'b0;
             uart2_interrupt_ff      <= 1'b0;
             uart2_interrupt         <= 1'b0;
+            mpu_interrupt_ff        <= 1'b0;
+            mpu_interrupt           <= 1'b0;
         end
         else
         begin
@@ -717,6 +734,8 @@ end
             keybord_interrupt       <= keybord_interrupt_ff;
             uart_interrupt_ff       <= uart_irq;
             uart_interrupt          <= uart_interrupt_ff;
+            mpu_interrupt_ff        <= mpu_irq;
+            mpu_interrupt           <= mpu_interrupt_ff;
             uart2_interrupt_ff      <= uart2_irq;
             uart2_interrupt         <= uart2_interrupt_ff;
         end
@@ -726,10 +745,13 @@ end
     logic prev_io_write_n;
     logic [7:0] write_to_uart;
     logic [7:0] write_to_uart2;
+    logic [7:0] write_to_mpu401;
     logic [7:0] uart_readdata_1;
     logic [7:0] uart_readdata;
     logic [7:0] uart2_readdata_1;
     logic [7:0] uart2_readdata;
+    logic [7:0] mpu401_readdata_1;
+    logic [7:0] mpu401_readdata;
 
     always_ff @(posedge clock)
     begin
@@ -766,11 +788,13 @@ end
             begin
                 write_to_uart <= internal_data_bus;
                 write_to_uart2 <= internal_data_bus;
+                write_to_mpu401 <= internal_data_bus;
             end
             else
             begin
                 write_to_uart <= write_to_uart;
                 write_to_uart2 <= write_to_uart2;
+                write_to_mpu401 <= write_to_mpu401;
             end
 
             if ((lpt_chip_select) && (~io_write_n) && ~address[0])
@@ -838,8 +862,29 @@ end
 
         .irq               (uart2_irq)
     );
-	 
-    MSMouseWrapper MSMouseWrapper_inst 
+
+    mpu401 mpu401_inst
+    (
+        .clk               (clock),
+        .reset             (reset),
+
+        .baudce            (clk_midi),
+
+        .address           (address[0]),
+        .writedata         (write_to_mpu401),
+        .read              (~io_read_n  & prev_io_read_n),
+        .write             (io_write_n & ~prev_io_write_n),
+        .readdata          (mpu401_readdata_1),
+        .cs                (mpu401_chip_select & iorq_uart),
+
+        .midi_tx           (midi_tx),
+        .midi_rx           (midi_rx),
+
+        .irq               (mpu_irq)
+    );
+
+
+    MSMouseWrapper MSMouseWrapper_inst
     (
         .clk(clock),
         .ps2dta_in(ps2_mousedat_in),
@@ -857,11 +902,13 @@ end
         begin
             uart_readdata <= uart_readdata_1;
             uart2_readdata <= uart2_readdata_1;
+            mpu401_readdata <= mpu401_readdata_1;
         end
         else
         begin
             uart_readdata <= uart_readdata;
             uart2_readdata <= uart2_readdata;
+            mpu401_readdata <= mpu401_readdata;
         end
     end
 
@@ -1641,6 +1688,11 @@ end
         begin
             data_bus_out_from_chipset <= 1'b1;
             data_bus_out <= uart2_readdata;
+        end
+        else if ((mpu401_chip_select) && (~io_read_n))
+        begin
+            data_bus_out_from_chipset <= 1'b1;
+            data_bus_out <= mpu401_readdata;
         end
         else if (`ENABLE_EMS && (ems_chip_select) && (~io_read_n))
         begin
