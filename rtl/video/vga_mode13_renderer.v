@@ -8,6 +8,8 @@ module vga_mode13_renderer(
     input  wire        clock,
     input  wire        reset,
     input  wire        enable,
+    input  wire [3:0]  crt_h_offset,
+    input  wire [2:0]  crt_v_offset,
 
     output wire [15:0] framebuffer_addr,
     output wire        framebuffer_read_en,
@@ -26,7 +28,8 @@ module vga_mode13_renderer(
     output reg         hsync,
     output reg         vsync,
     output reg         hblank,
-    output reg         vblank
+    output reg         vblank,
+    output wire        pixel_toggle
 );
 
     wire [9:0] pixel_x;
@@ -44,6 +47,8 @@ module vga_mode13_renderer(
         .clock          (clock),
         .reset          (reset),
         .enable         (enable),
+        .crt_h_offset   (crt_h_offset),
+        .crt_v_offset   (crt_v_offset),
         .pixel_x        (pixel_x),
         .pixel_y        (pixel_y),
         .active         (timing_active),
@@ -52,7 +57,8 @@ module vga_mode13_renderer(
         .hsync          (timing_hsync),
         .vsync          (timing_vsync),
         .line_start     (),
-        .frame_start    ()
+        .frame_start    (),
+        .pixel_toggle   (pixel_toggle)
     );
 
     vga_mode13_address address (

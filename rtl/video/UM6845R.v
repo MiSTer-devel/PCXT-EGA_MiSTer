@@ -91,6 +91,7 @@ parameter C_START = 0;
 parameter C_END = 0;
 parameter DISPLAYED_CHARS_PLUS1 = 0;
 parameter EGA_RESET_R16 = 0;
+parameter EGA_RESET_R17 = 1;
 parameter EGA_RESET_R18 = 0;
 parameter EGA_RESET_R19 = 0;
 
@@ -114,7 +115,16 @@ assign hsync_width = R3_h_sync_width;
 // opened at VSYNC start and closed a few scanlines later, not the whole
 // vertical blank interval.
 assign status_vretrace = ega_crtc_semantics ? ega_status_vretrace : 1'b0;
-assign status_not_displaying = ega_crtc_semantics ? (~hde | ega_vert_blank_active_r) : ~DE;
+// Input Status #1 bit 0 is the inverted display enable, so it follows the
+// vertical display end (R18) like DE does, not the vertical blanking window
+// (R21/R22). Those coincide in the option ROM's 350-line table, where blanking
+// starts at line 350 exactly, but not in its 200-line tables, where the
+// display ends at 200 and blanking only starts at 224. Driving this from
+// blanking made the ROM's monitor sense count 248 lines instead of 200, fail
+// with 1 long + 3 short beeps and leave the card in the mode 1 it had set to
+// take the measurement - which is why 5153/CGA booted at 40 columns while
+// 5154/ECD was unaffected.
+assign status_not_displaying = ~DE;
 assign vert_blank_active = ega_crtc_semantics ? ega_vert_blank_active_r : ~vde;
 assign scanline_mod16_debug = ega_scanline_mod16;
 assign vslines_debug = ega_vslines;
@@ -141,6 +151,11 @@ reg [3:0] R3_v_sync_width;
 reg [3:0] R3_h_sync_width = H_SYNCWIDTH;
 reg [6:0] R4_v_total = V_TOTAL;
 reg [4:0] R5_v_total_adj = V_TOTALADJ;
+// Indexes 04h and 05h carry the horizontal retrace on an EGA, not the vertical
+// total and its adjust. Kept alongside the MC6845 pair so the non-EGA instances
+// of this CRTC are untouched.
+reg [7:0] R4_h_retrace_start_e = 8'd0;
+reg [4:0] R5_h_retrace_end_e = 5'd0;
 reg [7:0] R6_v_displayed = V_DISP;
 reg [7:0] R7_v_sync_pos = V_SYNCPOS;
 reg [1:0] R8_skew;
@@ -154,7 +169,7 @@ reg [7:0] R13_start_addr_l = 8'd0;
 reg [5:0] R14_cursor_h = 6'd0;
 reg [7:0] R15_cursor_l = 8'd0;
 reg [7:0] R16_v_sync_pos_e = 8'd0;
-reg [7:0] R17_v_sync_end_e = 8'h01;
+reg [7:0] R17_v_sync_end_e = EGA_RESET_R17;
 reg [7:0] R18_v_display_end_e = 8'd0;
 reg [7:0] R19_offset_e = 8'd0;
 reg [7:0] R20_underline_loc_e = 8'd0;
@@ -179,7 +194,52 @@ wire [9:0] eff_v_sync_pos = ega_ext_timing ? ({R7_v_sync_pos[7], R7_v_sync_pos[2
 wire [9:0] eff_v_blank_start = ega_v_blank_start_valid ? {1'b0, R7_v_sync_pos[3], R21_v_blank_start_e} : eff_v_displayed;
 
 wire [9:0] eff_v_blank_end = ega_v_blank_end_valid ? {2'd0, R22_v_blank_end_e} : 10'd0;
-wire [9:0] eff_v_sync_match = eff_v_sync_pos - (hres_mode ? 10'd1 : 10'd2);
+
+// Whether what this mode emits is bound for a television.
+//
+// One question, answered once, because both halves of the sync placement turn
+// on it - and answered here rather than beside the horizontal half, because the
+// vertical half is decided further up the file. The geometry answers it on its
+// own: a line with blanking enough to hold the fixed lead below is a 200 line
+// block, and what cannot hold it is the 350 line enhanced modes and MDA, which
+// go to an enhanced display, a 5151 or the scaler and never to a set.
+//
+// Everything a television needs and a monitor does not hangs off this: the
+// fixed pulse position, the standard width, the vertical lead, and the CRT H
+// and V offsets themselves. Left ungated those controls walk a 350 line mode's
+// pulse into its own active video, where the scaler frames the line - or the
+// frame - in the wrong place. The converted 480i and 240p paths are unaffected
+// either way: they capture on display enable and build their own raster.
+localparam [7:0] TV_LEAD_CHARS_HI   = 8'd32;  // 256 dots at 8 dots per character
+localparam [7:0] TV_LEAD_CHARS_LO   = 8'd16;  // 256 dots at 16
+
+wire [8:0] eff_h_total   = ega_crtc_semantics ? ({1'b0, R0_h_total} + 9'd1) : {1'b0, R0_h_total};
+wire [7:0] tv_lead_chars = hres_mode ? TV_LEAD_CHARS_HI : TV_LEAD_CHARS_LO;
+
+// Compared before the subtraction, so a line shorter than the lead falls out
+// here rather than wrapping into a sync position the counter never reaches.
+
+wire tv_geometry = ega_crtc_semantics &&
+                   ((eff_h_total + 9'd1) > ({1'b0, R1_h_displayed} + {1'b0, tv_lead_chars}));
+// VSYNC is generated four scanlines ahead of where the CRTC asks for it, and
+// the delay line at the bottom of the file puts it back. The vertical offset
+// control can only ever delay VSYNC, so without this the position the mode asks
+// for is the bottom of its travel with nothing below it; advancing by half the
+// travel puts it in the middle instead.
+//
+// Only for the modes a set sees. A 350 line mode given this lead has its VSYNC
+// pulled four lines into its own picture, and the scaler frames the frame from
+// there.
+//
+// Guarded, because a mode whose sync starts in the first few scanlines would
+// wrap the compare to a row the counter never reaches and emit no VSYNC at all.
+// Only the emitted pulse moves: the retrace bit software polls is timed off
+// eff_v_sync_pos further down and does not shift with it.
+localparam [9:0] TV_VSYNC_LEAD_LINES = 10'd4;
+wire       tv_vsync_lead_fits = tv_geometry && (eff_v_sync_pos > 10'd8);
+wire [9:0] eff_v_sync_match = eff_v_sync_pos
+                              - (tv_vsync_lead_fits ? TV_VSYNC_LEAD_LINES : 10'd0)
+                              - (hres_mode ? 10'd1 : 10'd2);
 
 reg [4:0] addr;
 wire ega_crtc_write_protect = ega_crtc_semantics && R17_v_sync_end_e[7];
@@ -224,6 +284,8 @@ always @(posedge CLOCK) begin
 		R3_h_sync_width <= H_SYNCWIDTH;
 		R4_v_total <= V_TOTAL;
 		R5_v_total_adj <= V_TOTALADJ;
+		R4_h_retrace_start_e <= 8'd0;
+		R5_h_retrace_end_e <= 5'd0;
 		R6_v_displayed <= V_DISP;
 		R7_v_sync_pos <= V_SYNCPOS;
 		R8_skew <= 2'd0;
@@ -238,7 +300,7 @@ always @(posedge CLOCK) begin
 		R14_cursor_h <= 6'd0;
 		R15_cursor_l <= 8'd0;
 		R16_v_sync_pos_e <= EGA_RESET_R16;
-		R17_v_sync_end_e <= 8'h01;
+		R17_v_sync_end_e <= EGA_RESET_R17;
 		R18_v_display_end_e <= EGA_RESET_R18;
 		R19_offset_e <= EGA_RESET_R19;
 		R20_underline_loc_e <= 8'd0;
@@ -254,8 +316,14 @@ always @(posedge CLOCK) begin
 				01: if (!ega_crtc_write_protect) R1_h_displayed <= DI;
 				02: if (!ega_crtc_write_protect) R2_h_sync_pos <= DI;
 				03: if (!ega_crtc_write_protect) {R3_v_sync_width, R3_h_sync_width} <= DI;
-				04: if (!ega_crtc_write_protect) R4_v_total <= DI[6:0];
-				05: if (!ega_crtc_write_protect) R5_v_total_adj <= DI[4:0];
+				04: if (!ega_crtc_write_protect) begin
+					if (ega_crtc_semantics) R4_h_retrace_start_e <= DI;
+					else                    R4_v_total <= DI[6:0];
+				end
+				05: if (!ega_crtc_write_protect) begin
+					if (ega_crtc_semantics) R5_h_retrace_end_e <= DI[4:0];
+					else                    R5_v_total_adj <= DI[4:0];
+				end
 				06: if (!ega_crtc_write_protect) R6_v_displayed <= DI;
 				07: R7_v_sync_pos <= ega_crtc_write_protect
 					? {R7_v_sync_pos[7:5], DI[4], R7_v_sync_pos[3:0]}
@@ -287,7 +355,6 @@ wire [4:0] interlace = &R8_interlace[1:0];
 reg        in_adj;
 
 reg  [7:0] hcc;
-wire [8:0] eff_h_total = ega_crtc_semantics ? ({1'b0, R0_h_total} + 9'd1) : {1'b0, R0_h_total};
 wire       hcc_last  = (hcc == eff_h_total[7:0]) && (CRTC_TYPE || R0_h_total); // always false if !R0_h_total on CRTC0
 wire [7:0] hcc_next  = hcc_last ? 8'h00 : hcc + 1'd1;
 
@@ -481,8 +548,44 @@ end
 reg        hde;
 reg  [3:0] hsc;
 
-wire hsync_on = hcc == (R2_h_sync_pos - (hres_mode ? 3 : 4)) && R3_h_sync_width != 0;
-wire hsync_off = (hsc == R3_h_sync_width) || (CRTC_TYPE && R3_h_sync_width == 0);
+// Where the sync pulse goes.
+//
+// An EGA takes the retrace from indexes 04h and 05h: 04h is the character it
+// starts on and 05h is compared against the low five bits of the character
+// counter to end it. Indexes 02h and 03h are the blanking window. That is what
+// the real chip does, and it is what the fallback below still does.
+//
+// It is the wrong thing to send to a television, though. Every block of the
+// option ROM parameter table carries its own front porch, sized for a 5153 or a
+// 5154, so each mode lands somewhere different against the sync and no single
+// CRT H offset centres them all.
+//
+// So where the geometry allows it the pulse is placed a fixed distance ahead of
+// the first active dot instead, which is what a television wants - a constant
+// back porch, and a picture in the same place whatever the mode programs.
+// Active video starts at hcc 0, so a fixed lead is just a fixed number of
+// characters before the end of the line, and 32 characters at the full dot
+// clock and 16 at the halved one are both 256 dots.
+//
+// This moves only the pulse that leaves the chip. hcc, the display enable and
+// the status register software polls for retrace are untouched, so nothing the
+// emulated PC can observe changes with it.
+localparam [6:0] TV_SYNC_WIDTH_DOTS = 7'd64;  // 4.47 us at 14.318 MHz
+
+wire [8:0] tv_sync_char  = eff_h_total + 9'd1 - {1'b0, tv_lead_chars};
+
+wire [7:0] hcc_sync = hcc + (hres_mode ? 8'd3 : 8'd4);
+wire ega_h_retrace_valid = ega_crtc_semantics && (|R4_h_retrace_start_e);
+
+wire hsync_on = tv_geometry         ? (hcc == tv_sync_char[7:0])
+              : ega_h_retrace_valid ? (hcc_sync == R4_h_retrace_start_e)
+                                    : (hcc == (R2_h_sync_pos - (hres_mode ? 3 : 4)) && R3_h_sync_width != 0);
+
+// Under the fixed geometry the raw pulse is only a trigger. Its width comes
+// from the dot counter further down, so one character is enough here.
+wire hsync_off = tv_geometry         ? (hsc == 4'd1)
+               : ega_h_retrace_valid ? (hcc_sync[4:0] == R5_h_retrace_end_e)
+                                     : ((hsc == R3_h_sync_width) || (CRTC_TYPE && R3_h_sync_width == 0));
 
 reg hsync_raw;
 always @(posedge CLOCK) begin
@@ -523,12 +626,19 @@ wire hsync_rising = hsync_raw & ~hsync_raw_prev;
 
 reg [6:0] hsync_fixed_cnt;
 reg hsync_shaped;
+// The OSD override still wins where it is offered. Otherwise the fixed
+// geometry asks for the standard pulse, which is the other half of putting
+// every mode in the same place: a television measures its back porch from the
+// end of the pulse, so a width that varies by mode moves the picture on its
+// own, however the leading edge is placed.
+wire [6:0] hsync_fixed_width = |hsync_width_osd ? {1'b0, hsync_width_osd, 3'b0}
+                                               : TV_SYNC_WIDTH_DOTS;
 always @(posedge CLOCK) begin
 	if (~nRESET) begin
 		hsync_fixed_cnt <= 0;
 		hsync_shaped <= 0;
 	end else if (hsync_rising) begin
-		hsync_fixed_cnt <= {1'b0, hsync_width_osd, 3'b0} - 1'd1; // N * 8 dots
+		hsync_fixed_cnt <= hsync_fixed_width - 1'd1;
 		hsync_shaped <= 1;
 	end else if (PIXEL_CE) begin
 		if (|hsync_fixed_cnt) hsync_fixed_cnt <= hsync_fixed_cnt - 1'd1;
@@ -536,20 +646,33 @@ always @(posedge CLOCK) begin
 	end
 end
 
-// Use reshaped HSYNC only in low-res (40-col) mode when OSD override is active.
-wire hsync_effective = (|hsync_width_osd & ~hres_mode) ? hsync_shaped : hsync_raw;
+// Shaped whenever the fixed geometry is in play, and as before in the low
+// resolution modes when the OSD override is set.
+wire hsync_effective = (tv_geometry | (|hsync_width_osd & ~hres_mode)) ? hsync_shaped
+                                                                      : hsync_raw;
 
-// Same delay as before in the 14.318 MHz modes, where one dot was two CLOCK
-// cycles, but now expressed in dots so it tracks the selected dot clock.
-reg [63:0] hsync_delay_line;
-wire [5:0] hsync_delay_index = (hres_mode ? 6'd30 : 6'd60) -
-                               ({2'd0, crt_h_offset} << (hres_mode ? 2'd1 : 2'd2));
+// The delay is expressed in dots rather than clocks, so it tracks whichever dot
+// clock is selected.
+reg [95:0] hsync_delay_line;
+// It trims the fixed lead down to the back porch actually wanted, four dots to
+// a step of the OSD control, which is what centres a 640 dot picture in the
+// 52 us a television shows. 96 stages rather than 64 because the travel starts
+// well below the top of the lead and will not fit in a shorter line.
+//
+// The fallback takes no offset at all. The CRT H control is a television
+// control, and everything left on this path is a mode no television sees, so
+// these go where 04h and 05h ask and stay there. Walking their pulse is not
+// harmless: it already sits close to the last active dot, and it is the pulse
+// the scaler frames the line from.
+wire [6:0] hsync_delay_index =
+    tv_geometry ? (7'd85 - ({3'd0, crt_h_offset} << 2))
+                : (hres_mode ? 7'd30 : 7'd60);
 always @(posedge CLOCK) begin
     if(~nRESET) begin
-        hsync_delay_line <= 64'd0;
+        hsync_delay_line <= 96'd0;
         HSYNC <= 1'b0;
     end else if (PIXEL_CE) begin
-        hsync_delay_line <= {hsync_delay_line[62:0], hsync_effective};
+        hsync_delay_line <= {hsync_delay_line[94:0], hsync_effective};
         HSYNC <= hsync_delay_line[hsync_delay_index];
     end
 end
@@ -665,9 +788,15 @@ always @(posedge CLOCK) begin
 end
 
 reg [8:0] vsync_delay_line;
-wire [3:0] ega_crt_v_offset_sum = {1'b0, crt_v_offset} + 4'd2;
-wire [2:0] eff_crt_v_offset = ega_crtc_semantics ? (ega_crt_v_offset_sum[3] ? 3'd7 : ega_crt_v_offset_sum[2:0]) : crt_v_offset;
-wire [3:0] vsync_delay_index = 4'd7 - {1'b0, eff_crt_v_offset};
+// Delay in scanlines, trimming the four line lead above back to what is wanted,
+// which puts the position the mode asks for in the middle of the control's
+// travel rather than at one end of it.
+//
+// Nothing at all on the fallback: it took no lead above, so it has nothing to
+// trim and its VSYNC goes where the mode's own registers put it.
+wire [3:0] vsync_delay_index = ega_crtc_semantics
+                             ? (tv_geometry ? (4'd8 - {1'b0, crt_v_offset}) : 4'd0)
+                             : (4'd7 - {1'b0, crt_v_offset});
 
 // This used to be clocked by HSYNC itself, an unconstrained derived clock
 // whose phase against CLOCK was fixed only while the dot clock was a uniform
@@ -700,6 +829,18 @@ end
 
 // Cursor control
 reg cursor_line;
+wire [4:0] cursor_end_next = R11_cursor_end + 5'd1;
+
+// The scanline counter does not always advance through line_next: a new frame
+// and a line compare split both slam it to 0. Mirror that here, or the cursor
+// latch misses the transition and carries its state across the boundary - with
+// a start past end, which is exactly what the BIOS programs for the 200 line
+// modes, it stayed on into scanline 0 and drew a stray line at the top of the
+// cell. The 350 line modes were unaffected because there the BIOS writes a
+// start below its end and the latch is already off by then.
+wire       line_forced_zero = row_new & ((ega_crtc_semantics & frame_new & ~frame_adj)
+                                         | line_compare_hit);
+wire [4:0] line_next_eff    = line_forced_zero ? 5'd0 : line_next;
 assign CURSOR = hde & vde &
                 ((ega_crtc_semantics ? row_addr_r[13:0] : MA) ==
                  (ega_crtc_semantics ? cursor_addr_frame : crtc_reg_cursor_addr)) &
@@ -710,22 +851,29 @@ always @(posedge CLOCK) begin
 	if(~nRESET) begin
 		cursor_line <= 0;
 	end
-	else if (CLKEN) begin
-		if (line == R10_cursor_start)
+	// Decide at the end of a scanline, for the one about to be drawn. 86Box
+	// does the same in ega_poll: it clears cursorvisible against the scanline
+	// just finished and sets it against the already incremented one, so the
+	// flag is settled before the line is rendered. Deciding against the
+	// current line instead left it one character time late, and since the text
+	// pipeline samples the cursor once at the start of each cell, a cursor in
+	// column 0 missed its own first scanline entirely - the BIOS underline 6,7
+	// came out as a single line where 86Box draws two.
+	//
+	// The cursor covers R10 to R11 inclusive, so the clear belongs one scanline
+	// past R11, and the clear at line 0 stands in for 86Box's
+	// "|| scanline == rowcount". That second term also keeps the latch bounded:
+	// cursor-end values a BIOS hands out can land past the last real scanline
+	// of the current font - the IBM EGA BIOS's CGA cursor-shape emulation adds
+	// 5 to both start and end under an Enhanced Color Display switch reading -
+	// and line never reaches an out-of-range R11, so without it the cursor
+	// would latch on at R10 and never turn off.
+	else if (CLKEN && line_new) begin
+		if (line_next_eff == R10_cursor_start)
 			cursor_line <= 1;
-		// Also clear at the last scanline of the row (line_max), the way
-		// 86Box does it: "if (scanline == crtc[11] || scanline == rowcount)
-		// cursorvisible = 0". Cursor-end values a BIOS hands out can land
-		// past the last real scanline of the current font - the IBM EGA
-		// BIOS's CGA cursor-shape emulation adds 5 to both start and end
-		// under an Enhanced Color Display switch reading, which can push a
-		// 14-line-native end value out of the 0-13 range entirely - and
-		// line never reaches an out-of-range R11, so without this OR the
-		// cursor would latch on at R10 and never turn off again for the
-		// rest of the frame instead of just spilling past the row.
-		else if (line == R11_cursor_end || line == line_max)
+		else if ((line_next_eff == cursor_end_next) || (line_next_eff == 5'd0))
 			cursor_line <= 0;
-		end
 	end
+end
 
 endmodule

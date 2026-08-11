@@ -64,6 +64,7 @@ module ega_pan_split_tb;
     reg       fetch_valid = 1'b0;
     reg [7:0] text_char = 8'h00, text_attr = 8'h00, text_glyph = 8'h00;
     reg       text_valid = 1'b0;
+    reg       text_solid = 1'b0;
 
     wire hsync, hblank, vsync, vblank;
     wire de_o;
@@ -96,7 +97,8 @@ module ega_pan_split_tb;
         text_char       <= 8'h00;
         text_attr       <= 8'h0F;
         // only the third cell of a row carries a lit dot, in its leftmost column
-        text_glyph      <= (text_cell_addr[2:0] == 3'd2) ? 8'h80 : 8'h00;
+        text_glyph      <= text_solid ? 8'hFF :
+                           ((text_cell_addr[2:0] == 3'd2) ? 8'h80 : 8'h00);
     end
 
     ega_top dut (
@@ -655,8 +657,19 @@ module ega_pan_split_tb;
         crtc_write(8'h01, 8'd8);       // horizontal displayed
         crtc_write(8'h02, 8'd9);
         crtc_write(8'h03, 8'd10);
-        crtc_write(8'h04, 8'd10);
-        crtc_write(8'h05, 8'h03);
+        // Horizontal retrace: 04h is the character it starts on, 05h is matched
+        // against the low five bits of the character counter to end it. On a 14
+        // character line only the values below 14 are ever reached, and the CRTC
+        // advances both compares by 3 or 4 characters depending on the dot
+        // clock, so both the start and the end have to be left inside the line
+        // for every mode here. Get it wrong and HSYNC latches high rather than
+        // failing outright.
+        //
+        // This bench stays on the retrace registers: its line is far too short
+        // to hold the fixed 256 dot lead the output stage uses on a real mode,
+        // so tv_geometry declines it and the fallback path is what runs.
+        crtc_write(8'h04, 8'd11);
+        crtc_write(8'h05, 8'd15);
         crtc_write(8'h06, 8'd10);      // vertical total
         crtc_write(8'h07, 8'h00);
         crtc_write(8'h08, 8'h00);
@@ -720,6 +733,43 @@ module ega_pan_split_tb;
         for (pan = 0; pan < 16; pan = pan + 1)
             check_shift("text 9 dot", pan, (pan < 8) ? pan : -1);
         check_window_fixed("text 9 dot");
+
+        // --- text, 8 dot characters (mode 02h/03h with 8-dot clocking) ------
+        // This is the cell geometry used by the 640-wide MS-DOS Editor screen.
+        seq_write(8'h01, 8'h01);
+        repeat (4) @(negedge vblank);
+        probe_dot = 16;
+        capture_reference("text 8 dot", 0);
+        text_solid = 1'b1;
+        check_filled("text 8 dot solid", 0, 72);
+        text_solid = 1'b0;
+
+        // --- text, 8 dot characters, halved dot clock (mode 00h/01h) --------
+        // 40 column text: the same cell, but every dot is emitted twice, so the
+        // fetch-to-window delay is a different constant from the 80 column one
+        // and nothing above exercised it.
+        seq_write(8'h01, 8'h09);
+        repeat (4) @(negedge vblank);
+        probe_dot = 32;
+        capture_reference("text 8 dot 320", 0);
+        for (pan = 0; pan < 16; pan = pan + 1)
+            check_shift("text 8 dot 320", pan, (pan < 8) ? (2 * pan) : -2);
+        check_window_fixed("text 8 dot 320");
+
+        // The same cell on the 16.257 MHz oscillator, which is what a 350 line
+        // 40 column screen runs on. Dots are one or two clocks apart there, so
+        // the delay taps have to hold on both oscillators, not just the exact
+        // divide by two.
+        io_write(15'h03C2, 8'h67);
+        repeat (4) @(negedge vblank);
+        capture_reference("text 8 dot 320, 16.257 MHz", 0);
+        io_write(15'h03C2, 8'h63);
+        repeat (4) @(negedge vblank);
+
+        seq_write(8'h01, 8'h01);
+        repeat (4) @(negedge vblank);
+        probe_dot = 16;
+        capture_reference("text 8 dot", 0);
 
         // --- the same sweep, but programmed the way software does it --------
         seq_write(8'h01, 8'h09);

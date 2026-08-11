@@ -83,6 +83,7 @@ module ega_top(
     input vga_mode13_set,
     input vga_mode13_clear,
     output vga_mode13_active_out,
+    output vga_mode13_pixel_toggle_out,
     input [3:0] crt_h_offset,
     input [2:0] crt_v_offset,
     input [2:0] vsync_width_osd,
@@ -388,8 +389,12 @@ module ega_top(
     wire [4:0] ega_graphics_fetch_phase_last = ega_dot_clock_div2_active ? 5'd15 : 5'd7;
     localparam [4:0] EGA_VISIBLE_ADJ_TEXT_1X_A   = 5'd0;
     localparam [4:0] EGA_VISIBLE_ADJ_TEXT_1X_B   = 5'd0;
-    localparam [4:0] EGA_VISIBLE_ADJ_TEXT_DIV2_A = 5'd3;
-    localparam [4:0] EGA_VISIBLE_ADJ_TEXT_DIV2_B = 5'd3;
+    // 40 column text ran one dot late, so the leftmost dot column of every row
+    // fell off the left edge and the panning tail fetch put an extra dot on the
+    // right. Text sits three dots behind graphics at the full dot clock (11 vs
+    // 8); with 4 here it does the same at the halved one (19 vs 16).
+    localparam [4:0] EGA_VISIBLE_ADJ_TEXT_DIV2_A = 5'd4;
+    localparam [4:0] EGA_VISIBLE_ADJ_TEXT_DIV2_B = 5'd4;
     localparam [4:0] EGA_VISIBLE_ADJ_GFX_1X_A    = 5'd3;
     localparam [4:0] EGA_VISIBLE_ADJ_GFX_1X_B    = 5'd3;
     localparam [4:0] EGA_VISIBLE_ADJ_GFX_DIV2_A  = 5'd7;
@@ -612,7 +617,10 @@ module ega_top(
     // Reset to an 80-column text base so the pre-BIOS graphical splash has
     // stable EGA-compatible sync before BIOS programs its final mode timings.
     defparam ega_crtc.H_TOTAL = 8'd112;
-    defparam ega_crtc.H_DISP = 8'd80;
+    // This CRTC instance treats R1 as the last displayed character, so the
+    // reset value is one less than the number of visible characters. 79 gives
+    // the 80 eight-dot characters (640 pixels) used by the splash renderer.
+    defparam ega_crtc.H_DISP = 8'd79;
     defparam ega_crtc.H_SYNCPOS = 8'd90;
     defparam ega_crtc.H_SYNCWIDTH = 4'd10;
     defparam ega_crtc.V_TOTAL = 7'd31;
@@ -627,6 +635,9 @@ module ega_top(
     defparam ega_crtc.C_END = 5'd7;
     defparam ega_crtc.DISPLAYED_CHARS_PLUS1 = 1;
     defparam ega_crtc.EGA_RESET_R16 = 8'hDF;
+    // Three scanlines give a 15 kHz TV enough composite-sync energy to lock
+    // vertically during the pre-BIOS splash. Software may overwrite R17 later.
+    defparam ega_crtc.EGA_RESET_R17 = 8'h03;
     defparam ega_crtc.EGA_RESET_R18 = 8'hC7;
     defparam ega_crtc.EGA_RESET_R19 = 8'h28;
 
@@ -794,10 +805,14 @@ module ega_top(
     // after the scandoubler below, so this wire is driven further down.
     wire ega_dac_hit = vga_enabled & ~vga_mode13_active & vga_dac_sample_valid;
 
+    wire vga_mode13_pixel_toggle;
+
     vga_mode13_renderer vga_renderer (
         .clock                  (clk),
         .reset                  (reset),
         .enable                 (vga_mode13_active),
+        .crt_h_offset           (crt_h_offset),
+        .crt_v_offset           (crt_v_offset),
         .framebuffer_addr       (vga_framebuffer_addr),
         .framebuffer_read_en    (vga_framebuffer_read_en),
         .framebuffer_pixel      (vga_framebuffer_pixel),
@@ -813,7 +828,8 @@ module ega_top(
         .hsync                  (vga_hsync),
         .vsync                  (vga_vsync),
         .hblank                 (vga_hblank),
-        .vblank                 (vga_vblank)
+        .vblank                 (vga_vblank),
+        .pixel_toggle           (vga_mode13_pixel_toggle)
     );
 
     wire [5:0] ega_dbl_color;
@@ -826,7 +842,10 @@ module ega_top(
     // 2 x 16.257 MHz cannot be produced from the 28.636 MHz video clock, and
     // the 16.257 MHz modes scan at 18.4 - 21.9 kHz, well above the 15.7 kHz
     // that made doubling useful in the first place, so it is bypassed there.
-    wire ega_scandouble_active = scandouble_en & ~ega_hifreq_mode;
+    // Also permanently forced off: this build targets a 15 kHz CRT TV
+    // directly, so the natively-compatible EGA/CGA modes must always pass
+    // through undoubled rather than being scandoubled to ~31 kHz.
+    wire ega_scandouble_active = 1'b0;
 
     video_scandoubler #(.PIXEL_WIDTH(6), .H_TOTAL_MAX(912)) ega_scandoubler (
         .clk(clk),
@@ -1060,6 +1079,7 @@ module ega_top(
     assign ega_blink_counter_out = ega_blink_counter;
     assign ega_blink_state_out = ega_blink_state;
     assign vga_mode13_active_out = vga_mode13_active;
+    assign vga_mode13_pixel_toggle_out = vga_mode13_pixel_toggle;
     assign ega_display_sel_out = vga_mode13_active ? vga_de : ega_display_sel;
 
     assign bus_out = ega_bus_out_mux;

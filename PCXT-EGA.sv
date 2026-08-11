@@ -292,6 +292,7 @@ module emu
 
     wire forced_scandoubler;
     wire vga_mode13_active_video;
+    wire vga_mode13_pixel_toggle;
     wire ega_dot_toggle;
     wire ega_dot_clock_sel;
     wire ega_scandouble_active;
@@ -1012,6 +1013,7 @@ module emu
 		.VGA_VBlank_border                  (VGA_VBlank_border),
 		.vga_mode13_osd                    (vga_mode13_osd),
 		.vga_mode13_active_out             (vga_mode13_active_video),
+		.vga_mode13_pixel_toggle_out        (vga_mode13_pixel_toggle),
 	//	.address                            (address),
 		.address_ext                        (bios_access_address),
 		.ext_access_request                 (bios_access_request),
@@ -1509,7 +1511,26 @@ module emu
     end
 
     wire        ce_pixel_dot = ega_dot_toggle_d ^ ega_dot_toggle_dd;
-    wire        ce_pixel_video = (ega_scandouble_active || vga_video_direct) ? ce_pixel_28 : ce_pixel_dot;
+
+    // vga_mode13_active_video always drives the 15 kHz CRT TV compatible
+    // mode13h raster (rtl/video/vga_mode13_timing.v), whose real pixel rate
+    // is one flip per displayed pixel, not per clk_28_636 cycle. Same
+    // toggle-crossing idiom as ce_pixel_dot above, so the framework's
+    // active-window measurement (the OSD Information line) reports the real
+    // pixel count instead of the raw dot-clock count.
+    reg         vga_mode13_pixel_toggle_d = 1'b0;
+    reg         vga_mode13_pixel_toggle_dd = 1'b0;
+
+    always @(posedge clk_57_272)
+    begin
+        vga_mode13_pixel_toggle_d  <= vga_mode13_pixel_toggle;
+        vga_mode13_pixel_toggle_dd <= vga_mode13_pixel_toggle_d;
+    end
+
+    wire        ce_pixel_mode13 = vga_mode13_pixel_toggle_d ^ vga_mode13_pixel_toggle_dd;
+    wire        ce_pixel_video = ega_scandouble_active ? ce_pixel_28
+                                : vga_video_direct       ? ce_pixel_mode13
+                                : ce_pixel_dot;
 
     reg  [7:0]  VGA_R_video_src = 8'd0;
     reg  [7:0]  VGA_G_video_src = 8'd0;
@@ -1707,7 +1728,6 @@ module emu
     assign VGA_B_AUX  =  VGA_B_video_hdmi;
     assign VGA_HS =  VGA_HS_video_hdmi;
     assign VGA_VS =  VGA_VS_video_hdmi;
-    assign VGA_DE =  VGA_DE_video_hdmi;
     assign gamma_bus =  gamma_bus_video;
     assign CE_PIXEL  =  CE_PIXEL_video_hdmi;
     assign CE_PIXEL_CREDITS = CE_PIXEL_video_hdmi;
@@ -1744,8 +1764,20 @@ module emu
         .rgb_out    ( credits_rgb_out )
     );
 
+    // The credits block registers RGB once on CE_PIXEL, even while its overlay
+    // is disabled.  Register the already-processed DE on that same event; using
+    // VGA_DE_video_hdmi directly opens the active window one pixel before the
+    // corresponding credits_rgb_out sample and clips the last pixel instead.
+    reg VGA_DE_credits = 1'b0;
+    always @(posedge clk_video_out_ps or posedge video_retime_reset_local) begin
+        if (video_retime_reset_local)
+            VGA_DE_credits <= 1'b0;
+        else if (CE_PIXEL_CREDITS)
+            VGA_DE_credits <= VGA_DE_video_hdmi;
+    end
+
+    assign VGA_DE = VGA_DE_credits;
     assign {VGA_R, VGA_G, VGA_B} = credits_rgb_out;
 
 
 endmodule
-

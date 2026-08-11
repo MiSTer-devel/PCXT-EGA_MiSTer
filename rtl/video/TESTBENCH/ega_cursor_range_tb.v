@@ -128,6 +128,14 @@ module ega_cursor_range_tb;
     integer r, s;
     reg [13:0] cursor_seen;
 
+    // A bench that waits on a signal that never moves should say so, not hang.
+    initial begin
+        #40_000_000;
+        $display("TIMEOUT: the bench blocked waiting for the display");
+        $display("RESULT: FAIL");
+        $finish;
+    end
+
     task capture_row(output [13:0] pattern);
         begin
             pattern = 14'd0;
@@ -182,6 +190,23 @@ module ega_cursor_range_tb;
         end
     endtask
 
+    // The exact set of scanlines the cursor covers.
+    task check_span(input [255:0] label, input [7:0] start, input [7:0] endv,
+                    input [13:0] expected);
+        begin
+            program_cursor(start, endv);
+            repeat (3) @(negedge vblank);
+            capture_row(cursor_seen);       // settling row after the write
+            capture_row(cursor_seen);
+            checks = checks + 1;
+            if (cursor_seen !== expected) begin
+                errors = errors + 1;
+                $display("FAIL %0s: covers %014b, expected %014b",
+                         label, cursor_seen, expected);
+            end
+        end
+    endtask
+
     initial begin
         repeat (20) @(posedge clk); reset <= 1'b0; repeat (20) @(posedge clk);
 
@@ -189,13 +214,19 @@ module ega_cursor_range_tb;
         seq_write(8'h01, 8'h00);
         seq_write(8'h04, 8'h02);
         gfx_write(8'h06, 8'h0E);
-        crtc_write(8'h00, 8'd112); crtc_write(8'h01, 8'd80); crtc_write(8'h02, 8'd90);
-        crtc_write(8'h03, 8'hA0); crtc_write(8'h04, 8'd127); crtc_write(8'h05, 8'd6);
-        crtc_write(8'h06, 8'd100); crtc_write(8'h07, 8'h1F); crtc_write(8'h09, 8'h0D);
+        // Only R9 carries a real value here - the 14 scanline cell this bench
+        // walks. Everything else is deliberately tiny: cursor_line depends on
+        // the cell height and on R10/R11, never on how many characters a line
+        // holds or how many rows a frame has, and the original geometry (113
+        // characters, 357 scanlines once the R7 overflow bits are counted) made
+        // this the slowest bench in the tree by an order of magnitude.
+        crtc_write(8'h00, 8'd13);  crtc_write(8'h01, 8'd8);  crtc_write(8'h02, 8'd9);
+        crtc_write(8'h03, 8'd10);  crtc_write(8'h04, 8'd10); crtc_write(8'h05, 8'h03);
+        crtc_write(8'h06, 8'd41);  crtc_write(8'h07, 8'h00); crtc_write(8'h09, 8'h0D);
         crtc_write(8'h0C, 8'h00); crtc_write(8'h0D, 8'h00);
         crtc_write(8'h0E, 8'h00); crtc_write(8'h0F, 8'h00);
-        crtc_write(8'h10, 8'd96); crtc_write(8'h12, 8'd91); crtc_write(8'h13, 8'd80);
-        crtc_write(8'h17, 8'hE3); crtc_write(8'h15, 8'd92); crtc_write(8'h16, 8'd97);
+        crtc_write(8'h10, 8'd32); crtc_write(8'h12, 8'd27); crtc_write(8'h13, 8'd4);
+        crtc_write(8'h17, 8'hE3); crtc_write(8'h15, 8'd28); crtc_write(8'h16, 8'd41);
         crtc_write(8'h18, 8'hFF);
 
         // Well-formed shapes (both registers inside 0..13): must still work,
@@ -224,12 +255,27 @@ module ega_cursor_range_tb;
         check_bounded("underline BIOS-adjusted (16,17)",  8'h10, 8'h11);
         check_bounded("start in range, end far out (8,31)", 8'h08, 8'h1F);
 
+        // The exact set of scanlines the cursor covers, against 86Box. It sets
+        // cursorvisible using the already incremented scanline and clears it
+        // at the end of the line matching crtc[11], so R10 to R11 are drawn
+        // inclusive; with start past end it runs on to rowcount instead of
+        // wrapping to the top of the cell.
+        crtc_write(8'h09, 8'h07);           // 8 line cell, the 200 line modes
+        repeat (3) @(negedge vblank);
+        check_span("8 line cell, BIOS underline (6,7)", 8'h06, 8'h07, 14'b00000011000000);
+        check_span("8 line cell, end before start (6,0)", 8'h06, 8'h00, 14'b00000011000000);
+        check_span("8 line cell, full block (0,7)", 8'h00, 8'h07, 14'b00000011111111);
+
+        crtc_write(8'h09, 8'h0D);           // 14 line cell, the 350 line modes
+        repeat (3) @(negedge vblank);
+        check_span("14 line cell, BIOS underline (11,12)", 8'h0B, 8'h0C, 14'b01100000000000);
+
         $display("");
         $display("%0d checks, %0d failed", checks, errors);
         $display("RESULT: %0s", (errors == 0) ? "PASS" : "FAIL");
         $finish;
     end
 
-    initial begin #400_000_000; $display("RESULT: FAIL (timeout)"); $finish; end
+    initial begin #1_500_000_000; $display("RESULT: FAIL (timeout)"); $finish; end
 
 endmodule
