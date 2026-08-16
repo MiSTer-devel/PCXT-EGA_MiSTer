@@ -146,6 +146,7 @@ module PERIPHERALS #(
         output  logic           ega_scandouble_active_out,
         output  logic           ega_vmode_toggle_out,
         input   logic           vga_mode13_osd,
+        input   logic   [1:0]   ega_monitor_profile,
         output  logic           vga_mode13_active_out,
         output  logic           vga_mode13_pixel_toggle_out,
         input   logic   [3:0]   crt_h_offset,
@@ -168,6 +169,12 @@ module PERIPHERALS #(
     wire video_reset_clock = video_reset_clock_sync[1];
     wire video_reset_video = video_reset_video_sync[1];
 
+    // The OSD status originates in the chipset clock domain. Treat the
+    // monitor choice like a physical switch and synchronize its static level
+    // before exposing it to the EGA's video-domain input-status register.
+    (* ASYNC_REG = "TRUE" *) logic [1:0] ega_monitor_profile_meta = 2'b00;
+    (* ASYNC_REG = "TRUE" *) logic [1:0] ega_monitor_profile_sync = 2'b00;
+
     always_ff @(posedge clock or posedge video_reset) begin
         if (video_reset)
             video_reset_clock_sync <= 2'b11;
@@ -180,6 +187,17 @@ module PERIPHERALS #(
             video_reset_video_sync <= 2'b11;
         else
             video_reset_video_sync <= {video_reset_video_sync[0], 1'b0};
+    end
+
+    always_ff @(posedge clk_video) begin
+        if (video_reset_video) begin
+            ega_monitor_profile_meta <= 2'b00;
+            ega_monitor_profile_sync <= 2'b00;
+        end
+        else begin
+            ega_monitor_profile_meta <= ega_monitor_profile;
+            ega_monitor_profile_sync <= ega_monitor_profile_meta;
+        end
     end
 
     wire [1:0] ega_mem_map_sel_cfg;
@@ -963,6 +981,34 @@ end
         .access_ready           (video_io_access_ready)
     );
 
+    // Input Status 0 switch sense is physically selected by the same ISA OUT
+    // that programs Miscellaneous Output, and it is answered entirely here:
+    // ega_top does not decode 3C2h reads, so this is the only source of the
+    // byte. Both the selector and the readback therefore live on the live
+    // 8088 bus, with no clock crossing and no posted-write queue in between.
+    //
+    // That matters because the ROM issues OUT 3C2h,01h, then two instructions
+    // later OUT 3C2h,0Dh followed at once by IN 3C2h. Anything that delays the
+    // second selector past the read - the video clock domain, or the posted
+    // write still queued behind the first OUT in ega_io_stretch - answers that
+    // first probe with the previous selector and turns the CGA 80-column
+    // pattern 0111b into 0110b, which is the CGA 40-column setting.
+    wire [7:0] ega_switch_sense_host_data;
+    wire       ega_switch_sense_host_oe;
+
+    ega_switch_sense_host ega_switch_sense_isa (
+        .clock            (clock),
+        .reset            (reset),
+        .monitor_profile  (ega_monitor_profile),
+        .io_address       ({1'b0, address[13:0]}),
+        .io_data          (internal_data_bus),
+        .io_write_n       (io_write_n),
+        .io_read_n        (io_read_n),
+        .address_enable_n (address_enable_n),
+        .data_out         (ega_switch_sense_host_data),
+        .output_enable    (ega_switch_sense_host_oe)
+    );
+
     always_ff @(posedge clock)
     begin
         video_ram_address       <= address[16:0];
@@ -1180,6 +1226,7 @@ end
         .thin_font                  (thin_font),
         .scandouble_en              (video_scandoubler_en),
         .ega_enabled                (1'b1),
+        .ega_monitor_profile        (ega_monitor_profile_sync),
         .vga_enabled               (vga_mode13_osd),
         .vga_mode13_set            (1'b0),
         .vga_mode13_clear          (1'b0),
@@ -1667,6 +1714,11 @@ end
         begin
             data_bus_out_from_chipset <= 1'b1;
             data_bus_out <= vga_vram_cpu_dout;
+        end
+        else if (ega_switch_sense_host_oe)
+        begin
+            data_bus_out_from_chipset <= 1'b1;
+            data_bus_out <= ega_switch_sense_host_data;
         end
         else if (EGA_IO_OE_SYNC2)
         begin

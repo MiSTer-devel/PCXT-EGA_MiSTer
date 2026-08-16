@@ -98,6 +98,21 @@ The dot clock follows Miscellaneous Output bit 2, so 200-line CGA-compatible
 modes run at 14.318181 MHz and the 350-line and MDA-compatible modes at
 16.257 MHz, rather than one fixed rate for everything.
 
+The *Hardware → Monitor* option models the four monitor switches on the IBM
+EGA card. `IBM 5154/ECD` is the default full EGA configuration;
+`IBM 5153/CGA` internally selects the card's 80-column CGA switch pattern and
+makes the IBM EGA BIOS use its
+200-line, 8×8 text tables; and `IBM 5151/MDA` selects the 720×350, 80×25
+monochrome mode 7 configuration. The 5151 profile interprets the EGA connector's
+Mono Video and Intensity pins as normal and bright white, so *Full Color* is
+neutral and the separate *Display* option can tint it green, amber, or otherwise.
+The same connector path supports EGA BIOS mode `0Fh`, 640×350 monochrome
+graphics, in addition to mode 7 text.
+Monitor changes remain pending until *Reset & apply settings*, as on the
+physical card the switches were read during POST. The graphical boot splash
+always uses the 5154/ECD colour profile; the selected monitor takes effect when
+the BIOS starts after it.
+
 ### VGA mode 13h
 
 The *Audio & Video → VGA Mode 13h* option adds a 256-colour packed framebuffer

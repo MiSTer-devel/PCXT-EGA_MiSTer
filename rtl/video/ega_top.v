@@ -79,6 +79,7 @@ module ega_top(
     input thin_font,
     input scandouble_en,
     input ega_enabled,
+    input [1:0] ega_monitor_profile,
     input vga_enabled,
     input vga_mode13_set,
     input vga_mode13_clear,
@@ -226,7 +227,12 @@ module ega_top(
     wire ega_seq_data_cs = ((bus_a == 15'h03C5) || (bus_a == 15'h02C5)) & ~bus_aen & ega_enabled;
     wire ega_attr_read_cs = ((bus_a == 15'h03C1) || (bus_a == 15'h02C1)) & ~bus_aen & ega_enabled;
     wire ega_misc_write_cs = ((bus_a == 15'h03C2) || (bus_a == 15'h02C2)) & ~bus_aen & ega_enabled;
-    wire ega_switch_sense_cs = ((bus_a == 15'h03C2) || (bus_a == 15'h02C2)) & ~bus_aen & ega_enabled;
+    // 3C2h is write-only here. Reading it returns Input Status Register 0, and
+    // that byte is produced in the ISA clock domain by ega_switch_sense_host in
+    // Peripherals.sv. Answering it from here as well would race: the selector
+    // this side owns is ega_misc_output_reg, which is several clocks behind the
+    // OUT that set it, and the ROM reads the switches immediately after writing
+    // the selector. See the note on the instance in Peripherals.sv.
     wire ega_misc_read_cs = ((bus_a == 15'h03CC) || (bus_a == 15'h02CC)) & ~bus_aen & ega_enabled;
     wire ega_gfx_data_cs = ((bus_a == 15'h03CF) || (bus_a == 15'h02CF)) & ~bus_aen & ega_enabled;
     // 3C7-3C9 belong to the VGA mode 13h DAC, which a real IBM EGA does not have
@@ -279,6 +285,11 @@ module ega_top(
     wire vga_mode13_active;
     reg ega_vblank_q = 1'b0;
     wire ega_splash_active = ega_enabled & splashscreen;
+    // The boot artwork is authored for the normal EGA connector palette.
+    // Monitor switches are not applied until the BIOS starts, so keep the
+    // splash on the 5154/ECD profile even when CGA or MDA is pending.
+    wire [1:0] ega_monitor_profile_effective = ega_splash_active
+                                              ? 2'b00 : ega_monitor_profile;
     wire ega_display_sel = ega_enabled & (ega_video_active | ega_splash_active);
     reg [4:0] ega_crtc_index_shadow = 5'd0;
     reg       ega_crtc_h_timing_seen = 1'b0;
@@ -879,22 +890,24 @@ module ega_top(
         .blue(ega_blue_compat)
     );
 
-    // IBM EGA switch-sense readback for a color display switch pattern (1001b).
-    reg [7:0] ega_switch_sense_reg;
-    always @(*) begin
-        case (ega_misc_output_reg[3:2])
-            2'b00: ega_switch_sense_reg = 8'h10;
-            2'b01: ega_switch_sense_reg = 8'h00;
-            2'b10: ega_switch_sense_reg = 8'h00;
-            2'b11: ega_switch_sense_reg = 8'h10;
-        endcase
-    end
+    // On the EGA direct-drive connector, bit 3 is not a blue component when
+    // a 5151 is attached: pin 7 becomes Mono Video. Bit 4 is carried on pin 6
+    // as the separate intensity signal. Feeding those pins through the normal
+    // RGB conversion is what turns mode 7 text into dim blue/cyan. Rebuild the
+    // two physical 5151 levels here instead: the six-bit equivalents of
+    // classic normal and bright white (two-thirds and full scale).
+    wire [5:0] ega_5151_luma;
+    wire ega_5151_active = (ega_monitor_profile_effective == 2'd2);
+
+    ega_5151_output ega_5151_monitor (
+        .color(ega_video_selected),
+        .luma(ega_5151_luma)
+    );
 
     reg [7:0] ega_bus_out_mux;
     wire ega_bus_dir_sel = (ega_status_cs & ~bus_ior_l)
                          | (ega_seq_data_cs & ~bus_ior_l)
                          | (ega_attr_read_cs & ~bus_ior_l)
-                         | (ega_switch_sense_cs & ~bus_ior_l)
                          | (ega_misc_read_cs & ~bus_ior_l)
                          | (ega_gfx_data_cs & ~bus_ior_l)
                          | (ega_dac_read_index_cs & ~bus_ior_l)
@@ -910,8 +923,6 @@ module ega_top(
             ega_bus_out_mux = ega_seq_data_out;
         else if (ega_attr_read_cs & ~bus_ior_l)
             ega_bus_out_mux = ega_attr_data_out;
-        else if (ega_switch_sense_cs & ~bus_ior_l)
-            ega_bus_out_mux = ega_switch_sense_reg;
         else if (ega_misc_read_cs & ~bus_ior_l)
             ega_bus_out_mux = ega_misc_output_reg;
         else if (ega_gfx_data_cs & ~bus_ior_l)
@@ -1085,10 +1096,13 @@ module ega_top(
     assign bus_out = ega_bus_out_mux;
     assign bus_dir = ega_enabled ? ega_bus_dir_sel : 1'b0;
     assign ega_red   = vga_mode13_active ? vga_red
+                     : ega_5151_active    ? ega_5151_luma
                      : ega_dac_hit        ? vga_dac_sample_red   : ega_red_compat;
     assign ega_green = vga_mode13_active ? vga_green
+                     : ega_5151_active    ? ega_5151_luma
                      : ega_dac_hit        ? vga_dac_sample_green : ega_green_compat;
     assign ega_blue  = vga_mode13_active ? vga_blue
+                     : ega_5151_active    ? ega_5151_luma
                      : ega_dac_hit        ? vga_dac_sample_blue  : ega_blue_compat;
     assign hsync = ega_enabled ? (vga_mode13_active ? vga_hsync : ega_hsync_out) : 1'b1;
     assign dbl_hsync = ega_enabled ? (vga_mode13_active ? vga_hsync : ega_dbl_hsync) : 1'b1;

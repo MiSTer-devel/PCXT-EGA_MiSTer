@@ -39,6 +39,7 @@ module CHIPSET #(
         output  logic           VGA_VBlank,
         output  logic           VGA_VBlank_border,
         input   logic           vga_mode13_osd,
+        input   logic   [1:0]   ega_monitor_profile,
         output  logic           vga_mode13_active_out,
         output  logic           vga_mode13_pixel_toggle_out,
         // I/O Ports
@@ -433,6 +434,7 @@ module CHIPSET #(
         .ega_scandouble_active_out          (ega_scandouble_active),
         .ega_vmode_toggle_out               (ega_vmode_toggle_out),
         .vga_mode13_osd                    (vga_mode13_osd),
+        .ega_monitor_profile               (ega_monitor_profile),
         .vga_mode13_active_out             (vga_mode13_active_out),
         .vga_mode13_pixel_toggle_out        (vga_mode13_pixel_toggle_out),
         .crt_h_offset                       (crt_h_offset),

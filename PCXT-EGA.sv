@@ -276,6 +276,8 @@ module emu
 		"P2-;",
 		"P3,Hardware;",
 		"P3-;",
+		"P3oCD,Monitor,5154/ECD,5153/CGA,5151/MDA;",
+		"P3-;",
 		CONF_STR_EMS,
 		CONF_STR_UMB,
 		"P3ONO,Joystick 1, Analog, Digital, Disabled;",
@@ -300,6 +302,11 @@ module emu
     wire [1:0] buttons;
     wire [63:0] status;
     wire vga_mode13_osd = status[29];
+    // Status bits 45:44 are the pending physical-monitor switch selection.
+    // ega_monitor_profile_applied is only updated while the machine is held
+    // in reset, just as a real EGA card samples its switches during POST.
+    wire  [1:0] ega_monitor_profile_osd = status[45:44];
+    wire  [1:0] ega_monitor_profile_applied;
     wire [7:0]  xtctl;
     wire [7:0]  uart_mode;
 
@@ -551,6 +558,16 @@ module emu
             reset_count <= reset_count;
         end
     end
+
+    // Track the OSD selection throughout the stretched reset interval so the
+    // final stable value is ready before the CPU starts executing the BIOS.
+    // Changes made while the machine is running remain pending until reset.
+    ega_monitor_profile_latch monitor_profile_latch (
+        .clock        (clk_chipset),
+        .reset_active (reset),
+        .selected     (ega_monitor_profile_osd),
+        .applied      (ega_monitor_profile_applied)
+    );
 
     logic reset_cpu_ff = 1'b1;
     logic reset_cpu = 1'b1;
@@ -1012,6 +1029,7 @@ module emu
 		.VGA_VBlank                         (VBlank),
 		.VGA_VBlank_border                  (VGA_VBlank_border),
 		.vga_mode13_osd                    (vga_mode13_osd),
+		.ega_monitor_profile               (ega_monitor_profile_applied),
 		.vga_mode13_active_out             (vga_mode13_active_video),
 		.vga_mode13_pixel_toggle_out        (vga_mode13_pixel_toggle),
 	//	.address                            (address),

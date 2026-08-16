@@ -45,3 +45,17 @@ module ega_vgaport (
     end
 
 endmodule
+
+// The IBM 5151 does not consume RGB from the EGA connector. Pin 7 carries
+// monochrome video (EGA colour-code bit 3) and pin 6 carries its intensity
+// (bit 4). Keep this conversion separate from ega_vgaport so both text mode 7
+// and graphics mode 0Fh retain the two authentic monochrome levels.
+module ega_5151_output (
+    input  wire [5:0] color,
+    output wire [5:0] luma
+);
+
+    assign luma = !color[3] ? 6'd0 :
+                  color[4]  ? 6'd63 : 6'd42;
+
+endmodule

@@ -174,6 +174,7 @@ module ega_io_qualifier_tb;
         .thin_font                 (1'b0),
         .scandouble_en             (1'b0),
         .ega_enabled               (1'b1),
+        .ega_monitor_profile       (2'b00),
         .vga_enabled               (1'b1),
         .vga_mode13_set            (1'b0),
         .vga_mode13_clear          (1'b0),

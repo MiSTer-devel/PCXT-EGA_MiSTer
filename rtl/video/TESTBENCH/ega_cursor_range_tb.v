@@ -98,7 +98,7 @@ module ega_cursor_range_tb;
         .ega_display_sel_out(), .ega_dot_toggle_out(), .ega_dot_clock_sel_out(),
         .ega_scandouble_active_out(),
         .splashscreen(1'b0), .thin_font(1'b0), .scandouble_en(1'b0),
-        .ega_enabled(1'b1), .vga_enabled(1'b0),
+        .ega_enabled(1'b1), .ega_monitor_profile(2'b00), .vga_enabled(1'b0),
         .vga_mode13_set(1'b0), .vga_mode13_clear(1'b0), .vga_mode13_active_out(),
         .crt_h_offset(4'd0), .crt_v_offset(3'd0),
         .vsync_width_osd(3'd0), .hsync_width_osd(3'd0)
