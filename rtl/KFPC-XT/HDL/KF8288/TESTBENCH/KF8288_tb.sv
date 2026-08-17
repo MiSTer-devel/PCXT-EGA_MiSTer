@@ -63,6 +63,11 @@ module KF8288_tb();
     // Module under test
     //
     // Control input
+    // Added to KF8288 by this fork: it runs on the chipset clock and the CPU
+    // rate arrives as clock enables.  Holding both asserted puts one CPU edge
+    // on every bus clock, which is what this bench was written against.
+    logic           cpu_ce_posedge;
+    logic           cpu_ce_negedge;
     logic           address_enable_n;
     logic           command_enable;
     logic           io_bus_mode;
@@ -96,6 +101,8 @@ module KF8288_tb();
     task TASK_INIT();
     begin
         #(`TB_CYCLE * 0);
+        cpu_ce_posedge   = 1'b1;
+        cpu_ce_negedge   = 1'b1;
         address_enable_n = 1'b0;
         command_enable   = 1'b1;
         io_bus_mode      = 1'b0;

@@ -1,0 +1,4 @@
+# Shell scripts must keep LF in the working tree.  The testbench runners are
+# executed through WSL, and bash refuses a script that checkout handed back
+# with CRLF line endings.
+*.sh text eol=lf

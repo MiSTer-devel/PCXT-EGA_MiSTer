@@ -13,7 +13,7 @@ module READY_TEST_tm();
 `ifdef IVERILOG
     initial begin
         $dumpfile("tb.vcd");
-        $dumpvars(0, tb);
+        $dumpvars(0, READY_TEST_tm);
     end
 `endif
 
@@ -61,6 +61,13 @@ module READY_TEST_tm();
     //
     // Module under test
     //
+    // Added to READY by this fork: the module runs on the chipset clock and
+    // the CPU rate arrives as clock enables.  Holding both asserted puts one
+    // CPU edge on every bus clock, which is the relationship this bench was
+    // written against before they existed.
+    logic           cpu_ce_posedge;
+    logic           cpu_ce_negedge;
+    logic           memory_write_n;
     logic           io_read_n;
     logic           io_write_n;
     logic           dma0_acknowledge_n;
@@ -79,10 +86,13 @@ module READY_TEST_tm();
     task TASK_INIT();
     begin
         #(`TB_CYCLE * 0);
+        cpu_ce_posedge      = 1'b1;
+        cpu_ce_negedge      = 1'b1;
         io_read_n           = 1'b1;
         io_write_n          = 1'b1;
         dma0_acknowledge_n  = 1'b1;
         memory_read_n       = 1'b1;
+        memory_write_n      = 1'b1;
         address_enable_n    = 1'b1;
         io_channel_ready    = 1'b1;
         dma_wait_n          = 1'b1;
@@ -190,6 +200,22 @@ module READY_TEST_tm();
         io_write_n          = 1'b1;
         dma0_acknowledge_n  = 1'b1;
         memory_read_n       = 1'b1;
+        address_enable_n    = 1'b1;
+        #(`TB_CYCLE * 12);
+
+        // Memory write.  This fork added the write term to bus_state so a
+        // write arms the wait/ready flip-flop at the start of its cycle like
+        // everything else; see docs/max-speed-stability.md, RC2.  Nothing
+        // here drove memory_write_n before, so that term went unexercised.
+        memory_write_n      = 1'b0;
+        address_enable_n    = 1'b1;
+        #(`TB_CYCLE * 3);
+        memory_write_n      = 1'b1;
+        #(`TB_CYCLE * 3);
+        memory_write_n      = 1'b0;
+        address_enable_n    = 1'b0;
+        #(`TB_CYCLE * 3);
+        memory_write_n      = 1'b1;
         address_enable_n    = 1'b1;
         #(`TB_CYCLE * 12);
 
