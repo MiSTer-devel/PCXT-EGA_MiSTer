@@ -1557,6 +1557,64 @@
           </p>
         </div>
 
+        <div class="panel" style="margin-top: 22px">
+          <h3>Monitor profiles</h3>
+          <p>
+            An IBM EGA card carried a switch pack on its bracket telling the
+            option ROM which display was attached. The core models it: the
+            <em>Hardware</em> menu offers <code>IBM 5154/ECD</code>,
+            <code>IBM 5153/CGA</code> and <code>IBM 5151/MDA</code>, and like the
+            real card the setting is read while the machine is held in reset, so
+            a change takes effect at the next boot rather than immediately.
+          </p>
+          <p>
+            The choice is not cosmetic. Selecting <code>5153/CGA</code> makes the
+            ROM build its 200-line, 8x8 text tables at 15.7 kHz, which is what a
+            period CGA monitor or a television expects; <code>5151/MDA</code>
+            selects the 720x350 monochrome configuration and interprets the
+            connector's Mono Video and Intensity pins as normal and bright white,
+            leaving the separate display tint free to render it green or amber.
+          </p>
+        </div>
+
+        <div class="panel" style="margin-top: 22px">
+          <h3>Driving a 15 kHz set</h3>
+          <p>
+            The 200-line EGA and CGA-compatible modes already scan at 15.7 kHz,
+            which is exactly what a television wants. The core sends them out
+            undoubled — the scandoubler is permanently off — so they reach a set
+            over RGB/SCART the way the original hardware drove one, with VGA mode
+            13h retimed onto the same raster so a single pair of centring
+            offsets covers everything.
+          </p>
+          <p>
+            The 350-line modes cannot do that: they scan at about 21.8 kHz, and
+            MDA at 18.4, which no 15 kHz set will lock to. For those the core
+            captures a whole frame into the board's DDR3 and rebuilds the raster
+            from it, publishing only complete frames so a mode change landing
+            mid-picture cannot show half of one frame and half of another. Two
+            targets are offered from the OSD:
+          </p>
+          <ul class="plain-list">
+            <li>
+              <strong>480i</strong> — a standard interlaced television frame,
+              15.73 kHz at 59.94 Hz. All 350 lines are shown, half in each field.
+            </li>
+            <li>
+              <strong>240p</strong> — a progressive 262-line frame at the same
+              line rate. Steady, with no interlace flicker, at the cost of
+              fitting 350 lines into 224.
+            </li>
+          </ul>
+          <p>
+            Neither reaches the emulated hardware. The CRTC, the display enable
+            and the retrace bits software polls behave identically whichever
+            setting is chosen; this is the output stage only. Native output is
+            the default and is untouched, for an enhanced display, a 5151, or
+            the scaler.
+          </p>
+        </div>
+
         <div class="callout warning">
           <div class="callout-mark">!</div>
           <div>
@@ -1762,7 +1820,7 @@
           <article class="feature-card" data-label="CPU">
             <h3>Processor and timing</h3>
             <ul>
-              <li>MCL86-based 8088 CPU.</li>
+              <li>MCL86-based 8088 CPU, in Boogermann's rewrite, which passes the 3M-case SingleStepTests/8088 suite in full.</li>
               <li>4.77 MHz, 7.16 MHz and 9.54 MHz with a cycle-accurate target.</li>
               <li>Fast mode equivalent to a 3.5 MHz PC/AT 286 - see the note on its current state below.</li>
               <li>Clock selection from the OSD.</li>
@@ -1796,6 +1854,7 @@
               <li>Internal PC speaker.</li>
               <li>AdLib OPL2 through JTOPL.</li>
               <li>Creative Music System / Game Blaster.</li>
+              <li>MPU-401 MIDI at 330h, IRQ 2, for an mt32-pi or a USB MIDI interface.</li>
               <li>Volume, boost and stereo-mix controls from the OSD.</li>
             </ul>
           </article>
@@ -1813,11 +1872,12 @@
           <article class="feature-card" data-label="VID">
             <h3>MiSTer output</h3>
             <ul>
-              <li>Scandoubler and HQ2x/CRT effects.</li>
-              <li>Aspect-ratio adjustment.</li>
-              <li>Sync position and width corrections.</li>
+              <li>Direct 15 kHz output for every mode a television can scan.</li>
+              <li>350-line modes convertible to 480i or 240p from the OSD.</li>
+              <li>Horizontal and vertical centring, one pair of values for all modes.</li>
+              <li>Aspect-ratio adjustment and sync width correction.</li>
               <li>Full-colour, green, amber, monochrome and tinted display modes.</li>
-              <li>Optional composite output, depending on the integration.</li>
+              <li>HDMI through the MiSTer scaler, unaffected by the above.</li>
             </ul>
           </article>
         </div>
@@ -2218,13 +2278,15 @@
 
           <p>
             The 8088 CPU comes from the <strong>MCL86</strong> project by
-            MicroCoreLabs and the chipset from <strong>KFPC-XT</strong> by
-            kitune-san. The EGA and VGA mode 13h behaviour is modelled on the
-            video emulation in <strong>86Box</strong>. AdLib sound uses
-            <strong>JTOPL</strong> by Jose Tejada. Earlier releases used the
-            <strong>Graphics Gremlin</strong> CGA and Hercules adapters by
-            TubeTimeUS, since replaced by the EGA path. Splash artwork by
-            <strong>mills32</strong>.
+            MicroCoreLabs, in the rewrite contributed by <strong>Boogermann</strong>,
+            and the chipset from <strong>KFPC-XT</strong> by kitune-san. The EGA
+            and VGA mode 13h behaviour is modelled on the video emulation in
+            <strong>86Box</strong>. AdLib sound uses <strong>JTOPL</strong> by
+            Jose Tejada, and the MIDI path reuses the <strong>mt32-pi</strong>
+            bridge by Sorgelig and Kitrinx that ships with the MiSTer framework.
+            Earlier releases used the <strong>Graphics Gremlin</strong> CGA and
+            Hercules adapters by TubeTimeUS, since replaced by the EGA path.
+            Splash artwork by <strong>mills32</strong>.
           </p>
 
           <p>

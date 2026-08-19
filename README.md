@@ -38,9 +38,10 @@ For an architectural overview and possible future improvements, see the
 * **EGA video**: sequencer, graphics controller, attribute controller and a four-plane VRAM, around the UM6845R CRTC
 * Dual EGA dot clock, 14.318181 MHz and 16.257 MHz, selected per mode as on real hardware
 * CGA-compatible text and graphics behaviour, provided by the EGA rather than a separate adapter
+* **Direct 15 kHz CRT output**, with the 350-line modes convertible to 480i or 240p from the OSD
 * **Optional VGA mode 13h** (320×200×256) with a 256-entry DAC, off by default and switched from the OSD
 * 640 KiB conventional memory plus an optional 48 KiB UMB at C400h-CFFFh
-* EGA BIOS option ROM support
+* EGA BIOS option ROM support (required — the card is initialised by its own ROM, as on real hardware)
 * Optional EMS memory up to 2 MiB, with a fixed D000h-DFFFh page frame
 * XTIDE support
 * Audio: AdLib, C/MS and PC speaker
@@ -113,6 +114,66 @@ physical card the switches were read during POST. The graphical boot splash
 always uses the 5154/ECD colour profile; the selected monitor takes effect when
 the BIOS starts after it.
 
+### CRT output
+
+The core drives a 15 kHz CRT directly, with no scaler in between. The
+scandoubler is permanently off, so the 200-line EGA and CGA-compatible modes
+reach the display undoubled at 15.7 kHz, the way the original hardware drove
+one, and VGA mode 13h is retimed onto that same 200-line raster.
+
+`forced_scandoubler=1` therefore does nothing here, in any mode. It is not
+being ignored by mistake: doubling the 200-line modes would put them at about
+31 kHz, which is exactly what a television cannot lock to, so the scandoubler
+is disabled in the RTL rather than left to surprise anyone. See
+[31 kHz monitors](#31-khz-monitors) for what to use instead.
+
+*Audio & Video → CRT H offset* and *CRT V offset* centre the picture. One pair
+of values covers every mode that reaches a television. HDMI is unaffected by
+any of this.
+
+The 350-line EGA modes and MDA scan at about 21.8 and 18.4 kHz, which no 15 kHz
+set will lock to. *Audio & Video → 350-line CRT* converts them:
+
+* `Native` — the raster the card programs, unconverted. Default, and what an
+  enhanced display, a 5151 or the scaler wants.
+* `480i 15 kHz` — a standard interlaced television frame. All 350 lines are
+  shown, half of them in each field.
+* `240p 15 kHz` — a progressive 262-line frame. Steady, with no interlace
+  flicker, but 350 lines are fitted into 224 and the rest are dropped.
+
+The conversion captures a whole frame into the board's DDR3 and rebuilds the
+raster from it, publishing only complete frames so a mode change landing
+mid-picture cannot put half of one frame and half of another on screen. Nothing
+is fed back to the emulated hardware: the CRTC, the display enable and the
+retrace bits software polls behave identically whichever setting is chosen.
+
+The CRT offsets deliberately do not move the `Native` 350-line picture. Those
+modes do not go to a television, and they sit where the card's own registers
+put them.
+
+### 31 kHz monitors
+
+There is no native 31 kHz output. Every raster the core generates itself is a
+15 kHz one — the 200-line modes, mode 13h, and both 350-line conversions above —
+and the 350-line and MDA modes left on `Native` run at 18.4 to 21.8 kHz on the
+16.257 MHz dot clock, below what a VGA monitor will accept. A multisync CRT or a
+flat panel on the analogue port is served by the scaler, in `MiSTer.ini`:
+
+* `vga_scaler=1` — routes the scaler to the analogue output. The core's own
+  15 kHz rasters are not used in this configuration.
+* `video_mode=6` — the stock 640×480 at 25.175 MHz, so 31.47 kHz. A built-in
+  preset, so there is no modeline to work out.
+* `vsync_adjust=2` — makes the output follow the core's real 59.917 Hz instead
+  of a fixed 60 Hz. The scaler then stops repeating a frame about every twelve
+  seconds, and most of its latency goes with it. This produces a non-standard
+  refresh rate, which is why the option carries warnings generally: a CRT will
+  accept it, a flat panel may not, so drop to `vsync_adjust=1` if the picture
+  is rejected.
+
+Leave *350-line CRT* on `Native` here. The 480i and 240p conversions exist to
+reach a television and have nothing to offer a monitor that can already show
+350 lines progressively.
+
 ### VGA mode 13h
 
 The *Audio & Video → VGA Mode 13h* option adds a 256-colour packed framebuffer
@@ -177,14 +238,30 @@ example, or running EGA-only software with nothing else in the picture.
 
 ## Quick Start
 
+* Build the EGA BIOS with `SW/ROMs/EGA/make_ega_bios_rom.py` and copy the
+  resulting `ega_bios.rom` to the SD card. **The core cannot show a usable
+  picture without it** — see [EGA BIOS — required](#ega-bios--required).
 * Copy the contents of `games/PCXT` to your MiSTer SD card and extract `hd_image.zip`. It contains a [FreeDOS](https://www.freedos.org/) image.
 * Select the core from Computers/PCXT.
 * Press Win + F12 on your keyboard.
   * Model: IBM PCXT.
   * CPU Speed: pick a speed.
   * FDD & HDD → HDD Image: FreeDOS_HD.img
-  * BIOS → PCXT BIOS: choose a compatible system BIOS, such as `bios-micro8088-xtide.rom` from `SW/8088_bios/binaries/`.
+  * System & BIOS → PCXT BIOS: choose a compatible system BIOS, such as `bios-micro8088-xtide.rom` from `SW/8088_bios/binaries/`.
+  * System & BIOS → EGA BIOS: `ega_bios.rom`. **Required.**
 * Choose Reset & apply settings.
+
+### The F12 keys
+
+* **Win + F12** opens the OSD. F12 on its own is the machine's, not the
+  framework's, exactly as the splash says: it pauses and shows the credits.
+  Once the OSD is open, F12 or Esc closes it again.
+* **F12 during the boot splash** does the same thing: the credits come up and
+  the machine is held, except that here it was already held and what stops is
+  the splash's own countdown. Press it again to return to the splash and let
+  it run out. That is the moment to reach the OSD with Win + F12 and pick a
+  disk image or a video mode before DOS starts. Setting **Boot Splash Screen**
+  to *No* still dismisses it, so a held splash is never a dead end.
 
 ## Known limitations
 
@@ -227,7 +304,8 @@ new port.
 ## ROM Instructions
 
 ROMs are loaded from the **System & BIOS** section of the OSD. It provides slots
-for the main system BIOS, an optional XTIDE ROM at `EC00h`, and the EGA BIOS.
+for the main system BIOS, an optional XTIDE ROM at `EC00h`, and the EGA BIOS,
+which is required — see [EGA BIOS — required](#ega-bios--required) below.
 Once loaded, a ROM remains available on subsequent boots until it is replaced.
 Original and copyrighted system ROMs can be prepared with the Python scripts in
 `SW/ROMs/`:
@@ -244,9 +322,23 @@ Other Open Source ROMs are available in the same folder:
 * `bios-micro8088-xtide.rom`: Micro8088 BIOS with XTIDE support, built from the [8088 BIOS source code](https://github.com/skiselev/8088_bios).
 * `ide_xtl.rom`: XTIDE BIOS used by some scripts and upgradeable from its [upstream project](https://www.xtideuniversalbios.org/).
 
-An **EGA BIOS** option ROM is loaded from the same section. Loading it is what
-makes the machine report EGA in the equipment word, so software that trusts the
-equipment word instead of probing takes the EGA path.
+### EGA BIOS — required
+
+An **EGA BIOS** option ROM is loaded from the same section, and the core needs
+it to produce a picture. It is not optional, and it is not only for software
+that checks the equipment word.
+
+On a real machine the video card's own option ROM is what programs the CRTC,
+the sequencer and the attribute controller during POST. Nothing else does it.
+With no EGA BIOS loaded those registers are never initialised, and the picture
+has nowhere to go.
+
+The core no longer lets that happen. If either the PCXT BIOS or the EGA BIOS is
+missing, it stops at the boot splash instead of starting the machine, and says
+which one it wants — see [If the core stops at the splash](#if-the-core-stops-at-the-splash).
+
+Loading it also makes the machine report EGA in the equipment word, so software
+that trusts the equipment word instead of probing takes the EGA path.
 
 The original IBM EGA card BIOS (part number 6277356) is copyrighted and not
 included in this repository. `SW/ROMs/EGA/make_ega_bios_rom.py` builds it from
@@ -256,6 +348,28 @@ U44, 27128), producing `ega_bios.rom`. That dump is stored byte-reversed — the
 ROM socket on the card is wired with inverted address lines, so the raw EPROM
 read doesn't match the order the CPU sees — and the script reverses it back
 before writing the file.
+
+### If the core stops at the splash
+
+The splash staying on screen with a notice over it means a required ROM has not
+been selected. The notice names which one, and repeats until it is:
+
+* `No PCXT BIOS selected` — **System & BIOS → PCXT BIOS**
+* `No EGA BIOS selected` — **System & BIOS → EGA BIOS**
+
+The machine is held in reset for as long as that is true, and the splash is put
+back up for it even if **Boot Splash Screen** is set to *No*. Both are
+deliberate. An 8088 released with nothing at `F000h` executes whatever the
+memory happens to hold and eventually reprograms the CRTC, at which point a
+15 kHz television loses lock and takes the OSD with it — the "splash, then black
+screen" that made the core impossible to configure without an HDMI display.
+Holding it keeps the picture on the power-on 640×200, which any set that could
+show the splash can show, so the OSD stays readable and the missing file can be
+picked from the television itself.
+
+Selecting the file releases the machine immediately; no reset is needed. The
+same hold applies if a BIOS is replaced while the machine is running, which
+restarts it rather than pulling `F000h` out from under DOS.
 
 ## Other BIOSes
 

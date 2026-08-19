@@ -27,7 +27,7 @@
 // VDNUM 1..10
 // BLKSZ 0..7: 0 = 128, 1 = 256, 2 = 512(default), .. 7 = 16384
 //
-module hps_io #(parameter CONF_STR, CONF_STR_BRAM=0, PS2DIV=0, WIDE=0, VDNUM=1, BLKSZ=2, PS2WE=0, STRLEN=$size(CONF_STR)>>3)
+module hps_io #(parameter CONF_STR, CONF_STR_BRAM=0, PS2DIV=0, WIDE=0, VDNUM=1, BLKSZ=2, PS2WE=0, F12KEYMOD=0, STRLEN=$size(CONF_STR)>>3)
 (
 	input             clk_sys,
 	inout      [48:0] HPS_BUS,
@@ -336,6 +336,7 @@ always@(posedge clk_sys) begin : uio_block
 				  'h39: io_dout <= 1;
 				  'h3C: if(upload_req) begin io_dout <= {ioctl_upload_index, 8'd1}; upload_req <= 0; end
 				  'h3E: io_dout <= 1; // shadow mask
+				  'h43: io_dout <= |F12KEYMOD; // F12 alone belongs to the core; the menu needs Win+F12
 				'h003F: io_dout <= joystick_0_rumble;
 				'h013F: io_dout <= joystick_1_rumble;
 				'h023F: io_dout <= joystick_2_rumble;

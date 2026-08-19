@@ -46,12 +46,20 @@ mkdir -p "$BUILD_DIR"
 SOURCES=(UM6845R.v ega_*.v vga_*.v video_scandoubler.v
          ../KFPC-XT/HDL/ega_io_stretch.sv ../KFPC-XT/HDL/ega_vram_bram_frontend.sv)
 
+# The credits overlay is not part of the EGA path and stubs its own RAMs, so it
+# gets its own source list rather than being skipped.
+CREDITS_SOURCES=(../common/jtframe_credits.v)
+
 pass=0; fail=0; skip=0
 
 for tb in TESTBENCH/*.v TESTBENCH/*.sv; do
     name=$(basename "$tb"); stem=${name%.*}
-    case "$name" in jtframe*) continue ;; esac
     if [ -n "$FILTER" ] && [[ "$stem" != *"$FILTER"* ]]; then continue; fi
+
+    case "$name" in
+        jtframe*) SRC=("${CREDITS_SOURCES[@]}") ;;
+        *)        SRC=("${SOURCES[@]}") ;;
+    esac
 
     log=$BUILD_DIR/$stem.log
     start=$(date +%s)
@@ -62,11 +70,11 @@ for tb in TESTBENCH/*.v TESTBENCH/*.sv; do
         # --binary --timing runs the Verilog benches as they are, no C++ harness.
         $NICE verilator --binary --timing --public-flat-rw -Wno-fatal -j "$JOBS" \
             --Mdir "$BUILD_DIR/$stem.obj" -o "$stem" --top-module "$stem" \
-            "$tb" "${SOURCES[@]}" > "$log" 2>&1 \
+            "$tb" "${SRC[@]}" > "$log" 2>&1 \
             && $NICE "$BUILD_DIR/$stem.obj/$stem" >> "$log" 2>&1
         rc=$?
     else
-        $NICE iverilog -g2012 -o "$BUILD_DIR/$stem.vvp" "$tb" "${SOURCES[@]}" > "$log" 2>&1 \
+        $NICE iverilog -g2012 -o "$BUILD_DIR/$stem.vvp" "$tb" "${SRC[@]}" > "$log" 2>&1 \
             && $NICE vvp "$BUILD_DIR/$stem.vvp" >> "$log" 2>&1
         rc=$?
     fi
