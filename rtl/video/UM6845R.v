@@ -55,6 +55,10 @@ module UM6845R
 	output     [6:0] VC,
 	output     [9:0] VSCAN,
 	output     [7:0] H_DISP_REG,
+	// Active scanlines the current registers ask for, overflow bits included.
+	// The only place the 200 and 350 line modes can be told apart without
+	// naming a BIOS mode or trusting the monitor switches.
+	output     [9:0] V_DISP_REG,
 	output     [4:0] V_MAXSCAN_REG,
 	output    [3:0] hsync_width,
 	output           status_vretrace,
@@ -191,6 +195,7 @@ wire ega_v_blank_end_valid = ega_ext_timing && |R22_v_blank_end_e;
 wire [9:0] eff_v_total = ega_ext_timing ? ({R7_v_sync_pos[5], R7_v_sync_pos[0], R6_v_displayed} + 10'd2) : {3'd0, R4_v_total};
 wire [9:0] eff_v_displayed = ega_ext_timing ? ({R7_v_sync_pos[6], R7_v_sync_pos[1], R18_v_display_end_e} + 10'd1) : {3'd0, R6_v_displayed[6:0]};
 wire [9:0] eff_v_sync_pos = ega_ext_timing ? ({R7_v_sync_pos[7], R7_v_sync_pos[2], R16_v_sync_pos_e} + 10'd1) : {3'd0, R7_v_sync_pos[6:0]};
+assign V_DISP_REG = eff_v_displayed;
 wire [9:0] eff_v_blank_start = ega_v_blank_start_valid ? {1'b0, R7_v_sync_pos[3], R21_v_blank_start_e} : eff_v_displayed;
 
 wire [9:0] eff_v_blank_end = ega_v_blank_end_valid ? {2'd0, R22_v_blank_end_e} : 10'd0;

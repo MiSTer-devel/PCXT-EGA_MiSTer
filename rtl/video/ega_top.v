@@ -72,6 +72,13 @@ module ega_top(
     output ega_dot_toggle_out,
     output ega_dot_clock_sel_out,
     output ega_scandouble_active_out,
+    // The geometry the CRTC is currently asked for, held still for a whole
+    // frame. A 15 kHz television cannot scan more than about 240 lines
+    // progressively, so anything above that is what the 480i conversion is
+    // for; the width tells it whether to centre 640 dots or fill with 720.
+    output ega_mode350_out,
+    output [11:0] ega_active_dots_out,
+    output [9:0] ega_active_lines_out,
     // Toggles once after a software-programmed timing/mode change reaches
     // vertical blank.  MiSTer uses this to re-evaluate its video_mode mapping.
     output reg ega_vmode_toggle_out,
@@ -323,6 +330,7 @@ module ega_top(
     wire [6:0] ega_char_row;
     wire [9:0] ega_scanline_addr;
     wire [7:0] ega_h_displayed;
+    wire [9:0] ega_v_displayed;
     wire [4:0] ega_v_maxscan;
     wire [3:0] ega_hsync_width_crtc;
     wire [7:0] ega_seq_data_out;
@@ -616,6 +624,7 @@ module ega_top(
         .VC(ega_char_row),
         .VSCAN(ega_scanline_addr),
         .H_DISP_REG(ega_h_displayed),
+        .V_DISP_REG(ega_v_displayed),
         .V_MAXSCAN_REG(ega_v_maxscan),
         .hsync_width(ega_hsync_width_crtc),
         .crt_h_offset(crt_h_offset),
@@ -1119,4 +1128,56 @@ module ega_top(
     assign ega_dot_toggle_out = ega_dot_toggle;
     assign ega_dot_clock_sel_out = ega_hifreq_mode;
     assign ega_scandouble_active_out = ega_scandouble_active;
+
+    // How big a picture the CRTC is currently asked for. Characters times the
+    // character width, written as a shift and an add so it does not land in a
+    // DSP block for the sake of multiplying by eight or nine.
+    wire [8:0]  ega_active_chars_now = {1'b0, ega_h_displayed} + 9'd1;
+    wire [11:0] ega_active_cells_now = {ega_active_chars_now, 3'b000} +
+                                       (ega_char_9dot_active ? {3'd0, ega_active_chars_now}
+                                                             : 12'd0);
+    // Counted in pixel enables, not in dots, because that is what everything
+    // downstream counts. The 40 column modes halve the dot clock but not the
+    // enable, so each of their dots arrives as two samples and a 320 dot line
+    // is handed over as 640 - which is why the framework has always reported
+    // them as 640 wide and been right to.
+    //
+    // Telling the capture 320 there would have it reserve half the words a
+    // line needs, take the first half of every line and discard the rest.
+    wire [11:0] ega_active_dots_now = ega_dot_clock_div2_active
+                                    ? {ega_active_cells_now[10:0], 1'b0}
+                                    : ega_active_cells_now;
+
+    reg         ega_mode350 = 1'b0;
+    reg [11:0]  ega_active_dots = 12'd0;
+    reg [9:0]   ega_active_lines = 10'd0;
+
+    // Sampled once per frame, at the same vertical blank the rest of the mode
+    // change is applied on. A mode set writes the CRTC registers one at a time
+    // and the geometry is nonsense in between; anything downstream that
+    // switches on this would otherwise do it in the middle of a picture.
+    //
+    // The test is the geometry itself: more active scanlines than a 15 kHz
+    // television can show progressively. No BIOS mode number, no monitor
+    // switch, so a program that programs its own 350 line raster is caught
+    // the same as the ones the option ROM sets up.
+    //
+    // Mode 13h is excluded outright. It does not draw through this CRTC at
+    // all - vga_mode13_timing.v generates its raster - but the registers left
+    // behind by its mode set still describe a 400 line frame.
+    always @(posedge clk) begin
+        if (reset) begin
+            ega_mode350      <= 1'b0;
+            ega_active_dots  <= 12'd0;
+            ega_active_lines <= 10'd0;
+        end else if (ega_vblank_rise) begin
+            ega_mode350      <= ~vga_mode13_active && (ega_v_displayed > 10'd240);
+            ega_active_dots  <= ega_active_dots_now;
+            ega_active_lines <= ega_v_displayed;
+        end
+    end
+
+    assign ega_mode350_out       = ega_mode350;
+    assign ega_active_dots_out   = ega_active_dots;
+    assign ega_active_lines_out  = ega_active_lines;
 endmodule

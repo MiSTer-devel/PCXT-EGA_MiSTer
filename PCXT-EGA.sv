@@ -200,9 +200,6 @@ module emu
     assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
     //assign {SDRAM_DQ, SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
     assign SDRAM_CLK = clk_chipset;
-    assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = '0;
-
-    assign VGA_F1 = 0;
     assign VGA_SCALER = 0;
     assign VGA_DISABLE = 0;
     assign HDMI_FREEZE = 0;
@@ -273,6 +270,7 @@ module emu
 		"P2O89,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 		"P2OEG,Display,Full Color,Green,Amber,B&W,Red,Blue,Fuchsia,Purple;",
 		"P2OT,VGA Mode 13h,Off,On;",
+		"P2o23,350-line CRT,Native,480i 15 kHz,240p 15 kHz;",
 		"P2-;",
 		"P3,Hardware;",
 		"P3-;",
@@ -299,6 +297,9 @@ module emu
     wire ega_dot_clock_sel;
     wire ega_scandouble_active;
     wire ega_vmode_toggle;
+    wire        ega_mode350;
+    wire [11:0] ega_active_dots;
+    wire [9:0]  ega_active_lines;
     wire [1:0] buttons;
     wire [63:0] status;
     wire vga_mode13_osd = status[29];
@@ -1135,6 +1136,9 @@ module emu
 		.ega_dot_clock_sel                  (ega_dot_clock_sel),
 		.ega_scandouble_active              (ega_scandouble_active),
 		.ega_vmode_toggle_out               (ega_vmode_toggle),
+		.ega_mode350                        (ega_mode350),
+		.ega_active_dots                    (ega_active_dots),
+		.ega_active_lines                   (ega_active_lines),
 		.crt_h_offset                       (status[49:46]),
 		.crt_v_offset                       (status[52:50]),
 		.vsync_width_osd                    (vsync_width_osd),
@@ -1634,13 +1638,193 @@ module emu
     wire [7:0] pre2x_r, pre2x_g, pre2x_b;
     wire [23:0] credits_rgb_out;
     wire vga_video_direct_color = vga_video_direct && color;
-    wire [7:0] video_mixer_r = vga_video_direct_color ? {r, r[5:4]} : raux_video;
-    wire [7:0] video_mixer_g = vga_video_direct_color ? {g, g[5:4]} : gaux_video;
-    wire [7:0] video_mixer_b = vga_video_direct_color ? {b, b[5:4]} : baux_video;
-    wire video_mixer_hs = vga_video_direct_color ? HSync : haux_video;
-    wire video_mixer_vs = vga_video_direct_color ? VSync : vaux_video;
-    wire video_mixer_hb = vga_video_direct_color ? LHBL  : hbaux_video;
-    wire video_mixer_vb = vga_video_direct_color ? LVBL  : vbaux_video;
+    wire [7:0] bypass_r = vga_video_direct_color ? {r, r[5:4]} : raux_video;
+    wire [7:0] bypass_g = vga_video_direct_color ? {g, g[5:4]} : gaux_video;
+    wire [7:0] bypass_b = vga_video_direct_color ? {b, b[5:4]} : baux_video;
+    wire bypass_hs = vga_video_direct_color ? HSync : haux_video;
+    wire bypass_vs = vga_video_direct_color ? VSync : vaux_video;
+    wire bypass_hb = vga_video_direct_color ? LHBL  : hbaux_video;
+    wire bypass_vb = vga_video_direct_color ? LVBL  : vbaux_video;
+
+    ///////////////////  350-LINE CRT OUTPUT, 720x480i  ///////////////////
+    //
+    // EGA and MDA modes with more than 240 active lines scan at 18-22 kHz and
+    // no television locks to that. They are captured into DDRAM a frame at a
+    // time and read back out on a 15.734 kHz interlaced raster, which is the
+    // only way to show all 350 lines without throwing half of them away.
+    //
+    // Everything else - CGA, mode 13h, the boot splash - takes the bypass
+    // above untouched, and so does 350 lines when the OSD option is off.
+    //
+    // The capture taps the picture after the monochrome converter, so the
+    // Display option is already applied and a green or amber screen is
+    // captured the way it is shown.
+
+    // 0 native, 1 the captured picture interlaced, 2 the same picture
+    // progressively.
+    //
+    // 480i shows all 350 lines and flickers on high contrast text; 240p is
+    // steady and drops a third of them. Which of the two is better belongs to
+    // the television and the eye in front of it, so both are offered.
+    wire [1:0] crt480i_mode = status[35:34];
+    wire crt480i_osd  = |crt480i_mode;
+    wire crt480i_prog = crt480i_mode[1];
+
+    // The detector runs in the 28.636 MHz video domain and these change once a
+    // frame. Two stages across to the pipeline clock, which is the same PLL at
+    // twice the rate.
+    reg        mode350_s1, mode350_s2;
+    reg [11:0] adots_s1, adots_s2;
+    reg [9:0]  alines_s1, alines_s2;
+
+    always @(posedge CLK_VIDEO_PIPELINE) begin
+        mode350_s1 <= ega_mode350;  mode350_s2 <= mode350_s1;
+        adots_s1   <= ega_active_dots;  adots_s2  <= adots_s1;
+        alines_s1  <= ega_active_lines; alines_s2 <= alines_s1;
+    end
+
+    wire fb_enable = mode350_s2 & crt480i_osd;
+
+    wire [7:0]  cap_burstcnt;
+    wire [28:0] cap_addr;
+    wire [63:0] cap_din;
+    wire        cap_we;
+    wire        cap_busy;
+    wire [1:0]  fb_frame_buffer;
+    wire [11:0] fb_frame_width;
+    wire [9:0]  fb_frame_height;
+    wire [13:0] fb_frame_stride;
+    wire        fb_frame_valid;
+    wire [1:0]  fb_reading_buffer;
+
+    ega_fb_capture fb_capture (
+        .clk(CLK_VIDEO_PIPELINE),
+        .reset(video_retime_reset),
+        .enable(fb_enable),
+        .ce_pix(ce_pixel_video),
+        .r(bypass_r), .g(bypass_g), .b(bypass_b),
+        .de(~bypass_hb & ~bypass_vb),
+        .vblank(bypass_vb),
+        .active_dots(adots_s2),
+        .active_lines(alines_s2),
+        .reading_buffer(fb_reading_buffer),
+        .ddram_busy(cap_busy),
+        .ddram_burstcnt(cap_burstcnt),
+        .ddram_addr(cap_addr),
+        .ddram_din(cap_din),
+        .ddram_be(),
+        .ddram_we(cap_we),
+        .frame_buffer(fb_frame_buffer),
+        .frame_width(fb_frame_width),
+        .frame_height(fb_frame_height),
+        .frame_stride(fb_frame_stride),
+        .frame_seq(),
+        .frame_valid(fb_frame_valid),
+        .overrun()
+    );
+
+    wire        fb_rd_req;
+    wire [28:0] fb_rd_addr;
+    wire [7:0]  fb_rd_burstcnt;
+    wire        fb_rd_grant;
+    wire [63:0] fb_rd_data;
+    wire        fb_rd_data_valid;
+
+    wire [7:0]  fb_r, fb_g, fb_b;
+    wire        fb_hs, fb_vs, fb_hb, fb_vb, fb_de, fb_field, fb_ce_pix;
+
+    ega_fb_readout fb_readout (
+        .clk(CLK_VIDEO_PIPELINE),
+        .reset(video_retime_reset),
+        .enable(fb_enable),
+        .progressive(crt480i_prog),
+        .crt_h_offset(status[49:46]),
+        .crt_v_offset(status[52:50]),
+        .frame_buffer(fb_frame_buffer),
+        .frame_width(fb_frame_width),
+        .frame_height(fb_frame_height),
+        .frame_stride(fb_frame_stride),
+        .frame_valid(fb_frame_valid),
+        .rd_req(fb_rd_req),
+        .rd_addr(fb_rd_addr),
+        .rd_burstcnt(fb_rd_burstcnt),
+        .rd_grant(fb_rd_grant),
+        .rd_data(fb_rd_data),
+        .rd_data_valid(fb_rd_data_valid),
+        .r(fb_r), .g(fb_g), .b(fb_b),
+        .hsync(fb_hs), .vsync(fb_vs), .hblank(fb_hb), .vblank(fb_vb),
+        .de(fb_de), .field(fb_field), .ce_pix(fb_ce_pix),
+        .reading_buffer(fb_reading_buffer)
+    );
+
+    // The memory runs on the video pipeline clock, so the capture, the
+    // raster that reads it back and DDRAM itself are all one domain and
+    // nothing has to cross between them.
+    assign DDRAM_CLK = CLK_VIDEO_PIPELINE;
+
+    ega_ddr_arbiter fb_arbiter (
+        .clk(CLK_VIDEO_PIPELINE),
+        .reset(video_retime_reset),
+        .ddram_busy(DDRAM_BUSY),
+        .ddram_burstcnt(DDRAM_BURSTCNT),
+        .ddram_addr(DDRAM_ADDR),
+        .ddram_din(DDRAM_DIN),
+        .ddram_be(DDRAM_BE),
+        .ddram_we(DDRAM_WE),
+        .ddram_rd(DDRAM_RD),
+        .ddram_dout(DDRAM_DOUT),
+        .ddram_dout_ready(DDRAM_DOUT_READY),
+        .rd_req(fb_rd_req),
+        .rd_addr(fb_rd_addr),
+        .rd_burstcnt(fb_rd_burstcnt),
+        .rd_grant(fb_rd_grant),
+        .rd_data(fb_rd_data),
+        .rd_data_valid(fb_rd_data_valid),
+        .wr_req(cap_we),
+        .wr_addr(cap_addr),
+        .wr_burstcnt(cap_burstcnt),
+        .wr_din(cap_din),
+        .wr_busy_out(cap_busy),
+        .wr_grant()
+    );
+
+    // The path only changes with both rasters blanked, so neither side is ever
+    // cut off mid-picture. The two are unrelated in phase, so a window turns up
+    // within a frame or two of the request; until then the picture carries on
+    // as it was, which is what should happen.
+    reg crt480i_active = 1'b0;
+
+    always @(posedge CLK_VIDEO_PIPELINE) begin
+        if (video_retime_reset)
+            crt480i_active <= 1'b0;
+        else if (bypass_vb && fb_vb)
+            crt480i_active <= fb_enable & fb_frame_valid;
+    end
+
+    wire [7:0] video_mixer_r = crt480i_active ? fb_r  : bypass_r;
+    wire [7:0] video_mixer_g = crt480i_active ? fb_g  : bypass_g;
+    wire [7:0] video_mixer_b = crt480i_active ? fb_b  : bypass_b;
+    wire video_mixer_hs = crt480i_active ? fb_hs : bypass_hs;
+    wire video_mixer_vs = crt480i_active ? fb_vs : bypass_vs;
+    wire video_mixer_hb = crt480i_active ? fb_hb : bypass_hb;
+    wire video_mixer_vb = crt480i_active ? fb_vb : bypass_vb;
+    wire ce_pixel_mixer = crt480i_active ? fb_ce_pix : ce_pixel_video;
+
+    // The credits overlay and the framework's active-window measurement follow
+    // whichever raster is actually being emitted.
+    wire LHBL_out = crt480i_active ? fb_hb : LHBL;
+    wire LVBL_out = crt480i_active ? fb_vb : LVBL;
+
+    // Which field is on the wire. It moves once per field, far slower than
+    // anything else here, so two flops across to the output clock are enough.
+    reg vga_f1_ps1 = 1'b0, vga_f1_ps2 = 1'b0;
+
+    always @(posedge clk_video_out_ps) begin
+        vga_f1_ps1 <= crt480i_active & fb_field;
+        vga_f1_ps2 <= vga_f1_ps1;
+    end
+
+    assign VGA_F1 = vga_f1_ps2;
 	 
 
 	video_mixer #(.GAMMA(1)) video_mixer_main
@@ -1649,7 +1833,7 @@ module emu
 
 		.CLK_VIDEO(CLK_VIDEO_PIPELINE),
 		.CE_PIXEL(CE_PIXEL_video),
-		.ce_pix(ce_pixel_video),
+		.ce_pix(ce_pixel_mixer),
 
 		.freeze_sync(),
 
@@ -1683,8 +1867,8 @@ module emu
         VGA_HS_video_src <= VGA_HS_video;
         VGA_VS_video_src <= VGA_VS_video;
         VGA_DE_video_src <= VGA_DE_video;
-        LHBL_video_src <= LHBL;
-        LVBL_video_src <= LVBL;
+        LHBL_video_src <= LHBL_out;
+        LVBL_video_src <= LVBL_out;
         CE_PIXEL_video_src <= CE_PIXEL_video;
     end
 

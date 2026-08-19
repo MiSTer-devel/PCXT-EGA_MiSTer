@@ -145,6 +145,11 @@ module PERIPHERALS #(
         output  logic           ega_dot_clock_sel,
         output  logic           ega_scandouble_active_out,
         output  logic           ega_vmode_toggle_out,
+        // Geometry of the picture the CRTC is currently asked for, latched
+        // once a frame. What the 480i converter switches on.
+        output  logic           ega_mode350,
+        output  logic   [11:0]  ega_active_dots,
+        output  logic   [9:0]   ega_active_lines,
         input   logic           vga_mode13_osd,
         input   logic   [1:0]   ega_monitor_profile,
         output  logic           vga_mode13_active_out,
@@ -1222,6 +1227,9 @@ end
         .ega_dot_clock_sel_out      (ega_dot_clock_sel),
         .ega_scandouble_active_out  (ega_scandouble_active),
         .ega_vmode_toggle_out       (ega_vmode_toggle_out),
+        .ega_mode350_out            (ega_mode350),
+        .ega_active_dots_out        (ega_active_dots),
+        .ega_active_lines_out       (ega_active_lines),
         .splashscreen               (splashscreen),
         .thin_font                  (thin_font),
         .scandouble_en              (video_scandoubler_en),

@@ -169,3 +169,25 @@ set_input_delay -clock { SDRAM_CLK } -max 6 [get_ports { SDRAM_DQ[*] }]
 set_input_delay -clock { SDRAM_CLK } -min 3 [get_ports { SDRAM_DQ[*] }]
 set_output_delay -clock { SDRAM_CLK } -max 2 [get_ports { SDRAM_DQ[*] SDRAM_DQM* SDRAM_A[*] SDRAM_n*  SDRAM_BA[*] SDRAM_CKE }]
 set_output_delay -clock { SDRAM_CLK } -min 1.5 [get_ports { SDRAM_DQ[*] SDRAM_DQM* SDRAM_A[*] SDRAM_n*  SDRAM_BA[*] SDRAM_CKE }]
+
+#============================================================
+# DDRAM / HPS f2h bridge
+#
+# The 350-line framebuffer clocks the f2h SDRAM port from the video pipeline.
+# Until it existed that port was tied to constants, so every path through it was
+# optimised away and none of this was ever analysed. With it live, TimeQuest
+# compares the video clock against the HPS bridge clock and against the audio
+# PLL that shares the same memory component, finds no declared relationship,
+# and assumes the worst: three domains with slack in the tens of nanoseconds
+# and tens of thousands of nanoseconds of total negative slack.
+#
+# Those crossings are genuinely asynchronous and the bridge synchronises them
+# itself, so the numbers were meaningless - but the Fitter does not know that
+# and spends its effort chasing them, which is why the compile also got slow.
+#============================================================
+set CLOCK_AUDIO {pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk}
+
+set_clock_groups -asynchronous \
+    -group [get_clocks $CLOCK_VIDEO_X2] \
+    -group [get_clocks $CLOCK_H2F]      \
+    -group [get_clocks $CLOCK_AUDIO]
