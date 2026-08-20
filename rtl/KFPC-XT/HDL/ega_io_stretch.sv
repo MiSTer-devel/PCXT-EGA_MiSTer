@@ -115,8 +115,35 @@ module ega_io_stretch
     // strobe returns high. One assertion is captured exactly once.
     logic           strobe_seen;
 
-    wire    cpu_write       = ~io_write_n & ~address_enable_n;
-    wire    cpu_read        = ~io_read_n  & ~address_enable_n;
+    // Only accesses aimed at the video card need any of this. The crossing
+    // this module protects - two synchroniser stages out at 28.636 MHz, the
+    // two-identical-samples qualifier in ega_top, and two stages back at
+    // 50 MHz - exists for the EGA/VGA register file and for nothing else. The
+    // 8253, 8255, 8259, 8237, FDC, IDE, UART, RTC and OPL2 all answer inside
+    // the 50 MHz chipset domain through short fixed pipelines, so holding them
+    // for the video round trip buys nothing and costs a great deal: 12 clocks
+    // on every read, and 28 on any write issued behind another one. Those
+    // devices keep the io_settle_ticks floor in Chipset.sv, which is what they
+    // were sized against.
+    //
+    // ega_top decodes 3B4/3B5/3BA, 3C0-3CF, 3D4/3D5/3DA and the 2Cx aliases.
+    // 2Bx and 2Dx are folded in as margin: a port wrongly left on the slow
+    // path only loses speed, while one wrongly taken off it loses the RC8
+    // read-completion protection, so the bias belongs on the generous side.
+    wire    [9:0] io_page   = address[13:4];
+    wire    video_port      = (io_page == 10'h03B) | (io_page == 10'h03C)
+                            | (io_page == 10'h03D) | (io_page == 10'h02B)
+                            | (io_page == 10'h02C) | (io_page == 10'h02D);
+
+    // The forwarded address and data still follow every I/O cycle, exactly as
+    // they did before. Only the stalling is gated. Were video_address to stop
+    // tracking non-video cycles it would go stale while video_io_read_n still
+    // carried the raw strobe, and ega_top would answer a read that was never
+    // addressed to it.
+    wire    bus_write       = ~io_write_n & ~address_enable_n;
+    wire    bus_read        = ~io_read_n  & ~address_enable_n;
+    wire    cpu_write       = bus_write & video_port;
+    wire    cpu_read        = bus_read  & video_port;
     wire    original_active = strobe_seen & ~io_write_n;
 
     always_ff @(posedge clock, posedge reset) begin
@@ -136,9 +163,9 @@ module ega_io_stretch
                     // Same behaviour the live path had: the address holds
                     // under either strobe so reads keep theirs, the data
                     // follows only under the write strobe.
-                    if (cpu_write | cpu_read)
+                    if (bus_write | bus_read)
                         video_address <= address;
-                    if (cpu_write)
+                    if (bus_write)
                         video_data <= write_data;
                     if (cpu_write & ~strobe_seen) begin
                         strobe_seen <= 1'b1;

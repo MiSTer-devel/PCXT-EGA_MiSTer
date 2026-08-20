@@ -14,6 +14,7 @@ module ram_refresh_collision_tb;
     logic reset = 1'b1;
     always #10 clock = ~clock; // 50 MHz, matching clk_chipset
 
+    logic [1:0]  clk_select = 2'b11;
     logic [19:0] address = 20'h00000;
     logic [7:0]  data_in = 8'h00;
     logic        memory_read_n = 1'b1;
@@ -71,6 +72,7 @@ module ram_refresh_collision_tb;
         .umb_enabled           (1'b1),
         .bios_protect_flag     (3'b000),
         .wait_count_clk_en     (1'b1),
+        .clk_select            (clk_select),
         .ram_read_wait_cycle   (2'd0),
         .ram_write_wait_cycle  (2'd0)
     );
@@ -244,6 +246,7 @@ module ram_refresh_collision_tb;
     endtask
 
     integer i;
+    integer speed;
     integer previous_count;
     logic [19:0] collision_address;
     logic [7:0] collision_data;
@@ -264,18 +267,33 @@ module ram_refresh_collision_tb;
         // Addresses deliberately cross columns and rows, including the address
         // shown in the report; the bug is not tied to 30000h. 0046Bh is the
         // IBM BIOS data-area interrupt flag written by the POST IRQ0 handler.
-        for (i = 0; i < 6; i = i + 1) begin
-            case (i)
-                0: collision_address = 20'h0046B;
-                1: collision_address = 20'h12345;
-                2: collision_address = 20'h30000;
-                3: collision_address = 20'h57A5C;
-                4: collision_address = 20'h81234;
-                default: collision_address = 20'h9FFEF;
-            endcase
-            collision_data = 8'hA0 + i[7:0];
-            write_during_refresh(i, collision_address, collision_data);
+        //
+        // Swept at both readiness policies. RAM.sv runs the closed-loop
+        // handshake only at 2'b11 and the original open-loop one below it, so
+        // retaining the write after MEMW releases has to hold either way; the
+        // policy decides when the CPU is told to wait, not who owns the write.
+        // Ready_tb covers the CPU-side half.
+        for (speed = 0; speed < 2; speed = speed + 1) begin
+            clk_select = (speed == 0) ? 2'b11 : 2'b00;
+            wait_until_idle("policy change");
+            for (i = 0; i < 6; i = i + 1) begin
+                case (i)
+                    0: collision_address = 20'h0046B;
+                    1: collision_address = 20'h12345;
+                    2: collision_address = 20'h30000;
+                    3: collision_address = 20'h57A5C;
+                    4: collision_address = 20'h81234;
+                    default: collision_address = 20'h9FFEF;
+                endcase
+                collision_data = 8'hA0 + i[7:0] + speed[7:0];
+                write_during_refresh(i, collision_address, collision_data);
+            end
         end
+
+        // The tight-write cases below drive MEMW off the ready handshake, which
+        // only closes under the strict policy.
+        clk_select = 2'b11;
+        wait_until_idle("policy change");
 
         // Tight consecutive writes prove that ACTIVE uses the current live
         // address while WRITE uses the copy latched for that same access.

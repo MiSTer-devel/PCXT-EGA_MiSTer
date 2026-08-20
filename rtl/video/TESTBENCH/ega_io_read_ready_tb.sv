@@ -28,6 +28,15 @@
 //  the CPU raised its strobe - which is what io_settle_ticks in Chipset.sv
 //  does, and why that floor alone never covered this case.
 //
+//  The second distinction is which ports pay it. The module originally decoded
+//  no address, so every I/O read in the machine was charged the video round
+//  trip: 12 chipset clocks on the 8253, the 8255, the FDC, the UART, the RTC
+//  and everything else that answers inside the chipset domain and never
+//  crosses to 28.636 MHz at all. Those keep the io_settle_ticks floor, which
+//  is what they were sized against. The reads below therefore use real video
+//  ports, and the last case pins the exemption so it cannot silently grow back
+//  to cover the whole machine - or silently shrink and take 3DAh with it.
+//
 //============================================================================
 
 `timescale 1ns/1ps
@@ -38,7 +47,9 @@ module ega_io_read_ready_tb;
     always #10 clk50 = ~clk50;
     reg reset = 1'b1;
 
-    reg  [14:0] addr  = 15'h1234;
+    // 3DAh: the input status register, and the retrace poll a fade loop issues
+    // between palette writes - the exact read RC8 was found on.
+    reg  [14:0] addr  = 15'h03DA;
     reg  [7:0]  data  = 8'h00;
     reg         iow_n = 1'b1;
     reg         ior_n = 1'b1;
@@ -122,6 +133,32 @@ module ega_io_read_ready_tb;
         end
     endtask
 
+    // The mirror of `check`: a port the video card never decodes must not be
+    // charged the round trip it does not make.
+    task automatic check_not_held(input [255:0] label);
+        integer held;
+        begin
+            if (presented_at < 0) begin
+                fail_count = fail_count + 1;
+                $display("  FAIL  %0s: the read never reached the video domain", label);
+            end
+            else begin
+                held = (released_at < 0) ? 80 - presented_at
+                                         : released_at - presented_at;
+                if (held < MIN_HOLD_AFTER_PRESENT) begin
+                    pass_count = pass_count + 1;
+                    $display("  PASS  %0s: presented at clock %0d, CPU held %0d clocks (%0d ns) - not charged the video round trip",
+                             label, presented_at, held, held * 20);
+                end
+                else begin
+                    fail_count = fail_count + 1;
+                    $display("  FAIL  %0s: held %0d clocks (%0d ns) for a port the video card does not decode",
+                             label, held, held * 20);
+                end
+            end
+        end
+    endtask
+
     initial begin
         $display("");
         $display("=== a video read must hold the CPU until the answer can be back ===");
@@ -147,6 +184,18 @@ module ega_io_read_ready_tb;
         @(posedge clk50);
         do_read;
         check("read chasing a posted write");
+
+        repeat (30) @(posedge clk50);
+
+        // A port the video card never decodes. 40h is 8253 counter 0, which
+        // answers in the chipset domain in a couple of clocks; charging it the
+        // 28.636 MHz round trip is pure loss, and at the PC/AT 3.5MHz setting
+        // it was 12 clocks against a 160 ns bus cycle.
+        @(posedge clk50);
+        addr <= 15'h0040;
+        @(posedge clk50);
+        do_read;
+        check_not_held("read from a non-video port");
 
         $display("");
         $display("%0d passed, %0d failed", pass_count, fail_count);

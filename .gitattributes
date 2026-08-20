@@ -2,3 +2,8 @@
 # executed through WSL, and bash refuses a script that checkout handed back
 # with CRLF line endings.
 *.sh text eol=lf
+
+# DOS executables. Git's own binary detection already catches these, but a
+# .COM that gets line-ending conversion applied to it is corrupt in a way that
+# only shows up when it is run on hardware, so say it explicitly.
+*.com binary

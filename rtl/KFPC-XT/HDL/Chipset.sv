@@ -280,7 +280,8 @@ module CHIPSET #(
         .memory_read_n                      (memory_read_n),
         .memory_write_n                     (memory_write_n),
         .dma0_acknowledge_n                 (dma_acknowledge_n[0]),
-        .address_enable_n                   (address_enable_n)
+        .address_enable_n                   (address_enable_n),
+        .clk_select                         (clk_select)
     );
 
     BUS_ARBITER u_BUS_ARBITER 
@@ -484,7 +485,8 @@ module CHIPSET #(
         .bios_protect_flag                  (bios_protect_flag),
         .wait_count_clk_en                  (wait_count_clk_en),
         .ram_read_wait_cycle                (ram_read_wait_cycle),
-        .ram_write_wait_cycle               (ram_write_wait_cycle)
+        .ram_write_wait_cycle               (ram_write_wait_cycle),
+        .clk_select                         (clk_select)
     );
 
     assign  data_bus = internal_data_bus;

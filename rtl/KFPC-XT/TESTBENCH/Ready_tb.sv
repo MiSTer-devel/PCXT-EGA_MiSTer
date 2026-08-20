@@ -77,8 +77,50 @@ module READY_TEST_tm();
     logic           dma_wait_n;
     logic           dma_ready;
     logic           processor_ready;
+    logic   [1:0]   clk_select;
 
     READY u_READY(.*);
+
+    //
+    // Scoreboard
+    //
+    // This bench used to drive stimulus and dump a waveform, with nothing that
+    // could ever say FAIL. It now checks the one property the speed gate turns
+    // on and off, so a regression in it is caught rather than eyeballed.
+    //
+    integer pass_count = 0;
+    integer fail_count = 0;
+
+    task automatic check(input string label, input logic got, input logic want);
+    begin
+        if (got !== want) begin
+            fail_count = fail_count + 1;
+            $display("FAIL  %s: processor_ready = %b, expected %b", label, got, want);
+        end
+        else begin
+            pass_count = pass_count + 1;
+            $display("PASS  %s", label);
+        end
+    end
+    endtask
+
+    // Run one bus cycle and report whether it ever made the CPU wait. Both
+    // kinds are sampled the same way, so the I/O control is a real control.
+    task automatic cycle_waits(input bit is_io, output logic waited);
+    begin
+        waited = 1'b0;
+        address_enable_n = 1'b1;
+        if (is_io) io_write_n     = 1'b0;
+        else       memory_write_n = 1'b0;
+        repeat (6) begin
+            #(`TB_CYCLE);
+            if (~processor_ready) waited = 1'b1;
+        end
+        io_write_n     = 1'b1;
+        memory_write_n = 1'b1;
+        #(`TB_CYCLE * 6);
+    end
+    endtask
 
     //
     // Task : Initialization
@@ -96,6 +138,7 @@ module READY_TEST_tm();
         address_enable_n    = 1'b1;
         io_channel_ready    = 1'b1;
         dma_wait_n          = 1'b1;
+        clk_select          = 2'b11;
         #(`TB_CYCLE * 12);
     end
     endtask
@@ -103,6 +146,8 @@ module READY_TEST_tm();
     //
     // Test pattern
     //
+    logic write_waited;
+
     initial begin
         TASK_INIT();
         io_read_n           = 1'b1;
@@ -218,6 +263,36 @@ module READY_TEST_tm();
         memory_write_n      = 1'b1;
         address_enable_n    = 1'b1;
         #(`TB_CYCLE * 12);
+
+        // The write term is only armed at the fastest CPU speed setting. Below
+        // it the command pulse outlasts the SDRAM transaction by three to five
+        // times and the wait state is pure cost, so the same stimulus must
+        // produce a wait at 2'b11 and none at the other three settings.
+        clk_select = 2'b11;
+        #(`TB_CYCLE * 4);
+        cycle_waits(1'b0, write_waited);
+        check("max speed: a memory write makes the CPU wait", write_waited, 1'b1);
+
+        for (int unsigned sel = 0; sel < 3; sel++) begin
+            clk_select = sel[1:0];
+            #(`TB_CYCLE * 4);
+            cycle_waits(1'b0, write_waited);
+            check($sformatf("clk_select %0d: a memory write does not wait", sel),
+                  write_waited, 1'b0);
+        end
+
+        // I/O must arm the flip-flop at every setting - the gate is on the
+        // memory-write term alone, and gating the wrong one would still let
+        // the checks above pass.
+        clk_select = 2'b00;
+        #(`TB_CYCLE * 4);
+        cycle_waits(1'b1, write_waited);
+        check("slow speed: an I/O write still waits", write_waited, 1'b1);
+
+        $display("");
+        $display("%0d passed, %0d failed", pass_count, fail_count);
+        if (fail_count == 0) $display("RESULT: PASS");
+        else                 $display("RESULT: FAIL");
 
         // End of simulation
 `ifdef IVERILOG

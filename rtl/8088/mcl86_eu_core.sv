@@ -224,8 +224,8 @@ module mcl86_eu_core
     wire [15:0] eu_alu7;                // SHR result
     wire [15:0] eu_alu_out;             // Selected ALU result
     reg  [15:0] eu_alu_last_result;     // Retained result - the z/nz jump conditions test THIS
-    wire [15:0] adder_out;              // Ripple-carry sum
-    wire [16:0] carry;                  // Per-bit carry chain; carry[16] is the carry out
+    wire [15:0] adder_out;              // Adder sum
+    wire [16:0] carry;                  // Carry into each bit; carry[16] is the carry out
 
     //--------------------------------------------------------------------------
     // Internal Signals - Arithmetic Flag Generation
@@ -462,22 +462,25 @@ module mcl86_eu_core
                       :                            16'hEEEE;
 
     //--------------------------------------------------------------------------
-    // 16-bit Ripple Carry Adder Generation
+    // 16-bit Adder
     //--------------------------------------------------------------------------
-    // Implements full 16-bit addition with carry propagation for ADD operations.
-    // The carry chain is exposed rather than hidden inside a '+' because the flag
-    // logic needs the intermediate carries, not just the sum: carry[4] is the BCD
-    // auxiliary carry, carry[8] the byte carry, carry[16] the word carry, and the
-    // XOR of the top two carries is the signed overflow.
-    assign carry[0] = 1'b0;
-
-    genvar i;
-    generate
-        for (i = 0; i < 16; i = i + 1) begin : gen_adder
-            assign adder_out[i] =  eu_operand0[i] ^ eu_operand1[i] ^ carry[i];
-            assign carry[i+1]   = (eu_operand0[i] & eu_operand1[i]) | (eu_operand0[i] & carry[i]) | (eu_operand1[i] & carry[i]);
-        end
-    endgenerate
+    // Full 16-bit addition, plus every intermediate carry the flag logic needs:
+    // carry[4] is the BCD auxiliary carry, carry[8] the byte carry, carry[16] the
+    // word carry, and the XOR of the top two carries is the signed overflow.
+    //
+    // This was a per-bit ripple written out longhand here. It was correct, but
+    // sixteen chained carry expressions are not something Quartus can put on the
+    // ALM's dedicated carry hardware, so it built the chain from general logic
+    // and that chain became the critical path of the whole core - the reason
+    // clk_100 closed at 88 MHz against 100 (docs/max-speed-stability.md, RC7).
+    // mcl86_adder computes the same function bit for bit, with the intermediate
+    // carries recovered from the sum instead of produced ahead of it.
+    mcl86_adder u_adder (
+        .a      (eu_operand0),
+        .b      (eu_operand1),
+        .sum    (adder_out),
+        .carry  (carry)
+    );
 
     //--------------------------------------------------------------------------
     // Parity Calculation for 8-bit Results

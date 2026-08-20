@@ -48,7 +48,9 @@ module RAM (
     // Wait mode
     input   logic           wait_count_clk_en,
     input   logic   [1:0]   ram_read_wait_cycle,
-    input   logic   [1:0]   ram_write_wait_cycle
+    input   logic   [1:0]   ram_write_wait_cycle,
+    // CPU speed setting (0 - 4.77MHz, 1 - 7.16MHz, 2 - 9.54MHz, 3 - max)
+    input   logic   [1:0]   clk_select
 );
 
     typedef enum {IDLE, RAM_WRITE_1, RAM_WRITE_2, RAM_READ_1, RAM_READ_2, COMPLETE_RAM_RW, WAIT} state_t;
@@ -67,6 +69,113 @@ module RAM (
     logic   [1:0]   read_wait_count;
     logic   [1:0]   write_wait_count;
     logic           access_ready;
+
+    //
+    // Sequential read lookahead
+    //
+    // Every access here is one byte and every byte costs a full SDRAM
+    // transaction: ACTIVE, one column command, PRECHARGE. With trp = 0 and
+    // CL = 2 that is 7 chipset clocks per byte, and on an 8-bit bus with a
+    // four-byte prefetch queue roughly half of all bus traffic is sequential
+    // instruction fetch, which asks for byte N and then byte N+1.
+    //
+    // Reading two words in one burst costs one extra clock in KFSDRAM's READ
+    // state and saves the whole ACTIVE and PRECHARGE of the second access:
+    // 8 clocks for two bytes instead of 14. The second byte is parked here with
+    // the address it belongs to, and the next access is answered from the latch
+    // without touching the SDRAM at all.
+    //
+    // Correctness rests on three things:
+    //
+    //  * Every write reaches this module. The chipset has one memory bus and
+    //    the arbiter drives it for the CPU, for DMA and for the HPS BIOS
+    //    loader alike, so there is no master that can change SDRAM behind the
+    //    latch's back. Invalidation is by address, not wholesale, so a write
+    //    stream to one buffer does not keep flushing a read stream from
+    //    another - which is exactly what rep movsb does.
+    //
+    //  * The addresses compared are the decoded ones, after the EMS window has
+    //    been resolved. Two different logical addresses that map to the same
+    //    physical word are the same entry, and remapping a bank does not make
+    //    the parked byte wrong, because the byte belongs to the physical
+    //    address.
+    //
+    //  * KFSDRAM's burst counter is the column adder, `address[8:0] +
+    //    access_counter`, so a burst that starts at column 511 wraps to column
+    //    0 of the SAME row rather than advancing to the next one. That second
+    //    word is not address+1, so the lookahead is suppressed there.
+    //
+    // A write-protected region is deliberately not invalidated: write_command
+    // already excludes it, the write never reaches the memory, and the parked
+    // byte is still what is there.
+    //
+    // Two entries, because one is not enough to survive real code.
+    //
+    // Every read that is allowed to park overwrites the entry, and an
+    // instruction fetch is a memory read like any other. With a single entry,
+    // the byte parked by a data read is gone before the next data read asks for
+    // it, because the BIU refilled its queue in between. That leaves the latch
+    // working only where the bus does one thing at a time - inside a REP string
+    // operation, or a straight run of fetch - and doing nothing at all in code
+    // that interleaves the two, which is most code.
+    //
+    // Two entries with round-robin replacement need no help from the BIU to
+    // tell code from data. The two streams alternate on the bus by themselves,
+    // so they land in different entries and stay there:
+    //
+    //   fetch A   miss, park A+1 -> entry 0
+    //   data  D   miss, park D+1 -> entry 1
+    //   fetch A+1 HIT entry 0
+    //   data  D+1 HIT entry 1
+    //
+    // Nothing about correctness rests on the replacement policy. A hit still
+    // requires an exact address match against a valid entry, and a write still
+    // clears any entry it lands on, so the worst a bad victim choice can do is
+    // cost a transaction.
+    logic   [21:0]  lookahead_address_0;    // Byte address entry 0 can answer
+    logic   [21:0]  lookahead_address_1;
+    logic   [7:0]   lookahead_data_0;
+    logic   [7:0]   lookahead_data_1;
+    logic   [1:0]   lookahead_valid;
+    logic           lookahead_victim;       // Which entry the next park replaces
+    logic           read_beat;              // 0 = first word of the burst, 1 = second
+    logic           prefetch_armed;         // This transaction was issued as a burst of two
+
+    // Only the two fastest settings take the burst. The two slowest ones are
+    // the cycle-accurate settings, and there the bus already has slack: at
+    // 4.77MHz the profiler measures no change at all, and at 7.16MHz the burst
+    // is a net loss of about 1.6 chipset clocks per byte. A CPU cycle there is
+    // 6.98 chipset clocks, so the one extra clock the burst spends inside
+    // KFSDRAM's READ state can cross the point where READY is sampled and cost
+    // a whole T-state on every miss - more than the hits give back. At 9.54MHz
+    // and above the cycle is short enough that the extra clock stays inside it,
+    // and the burst gains 1.5 and 3.0 clocks per byte respectively.
+    //
+    // clk_select is registered on this same clock at the top level, so this is
+    // not a clock crossing, and it only changes on biu_done, between bus
+    // cycles. Both the issue side and the answer side are gated, so with the
+    // burst off this module behaves exactly as it did before it existed.
+    wire            lookahead_enable   = clk_select[1];
+
+    // The column adder wraps within the row, so the word after column 511 is
+    // not the next byte. Ask for one word there.
+    wire            lookahead_possible = lookahead_enable & (decoded_address[8:0] != 9'h1FF);
+
+    wire            lookahead_hit_0    = lookahead_enable & lookahead_valid[0]
+                                       & (decoded_address == lookahead_address_0);
+    wire            lookahead_hit_1    = lookahead_enable & lookahead_valid[1]
+                                       & (decoded_address == lookahead_address_1);
+    wire            lookahead_hit      = lookahead_hit_0 | lookahead_hit_1;
+
+    // Entry 0 is checked first; the two addresses can never both match, since
+    // an address is only parked into one entry and a park into the other would
+    // have to match it to collide.
+    wire    [7:0]   lookahead_answer   = lookahead_hit_0 ? lookahead_data_0
+                                                         : lookahead_data_1;
+
+    // What a read leaving IDLE will do. Registered into prefetch_armed on the
+    // same edge, so access_num is stable for the whole transaction.
+    wire            start_prefetch     = read_command & lookahead_possible & ~lookahead_hit;
 
     wire ems_bank_select = ems_b1 | ems_b2 | ems_b3 | ems_b4;
     wire ems_page_frame  = `ENABLE_EMS && (address[19:16] == 4'b1101);
@@ -200,8 +309,20 @@ module RAM (
             IDLE: begin
                 if (write_command)
                     next_state = RAM_WRITE_1;
-                else if (read_command)
-                    next_state = RAM_READ_1;
+                else if (read_command) begin
+                    // A hit never reaches the SDRAM. COMPLETE_RAM_RW is where
+                    // access_ready is raised and where it waits for the CPU to
+                    // release the strobe, which is exactly what is wanted.
+                    //
+                    // Spelled out rather than written as a ternary: Icarus
+                    // rejects a conditional whose arms are enum values with
+                    // "this assignment requires an explicit cast", which is
+                    // what keeps the KF8237 benches from elaborating.
+                    if (lookahead_hit)
+                        next_state = COMPLETE_RAM_RW;
+                    else
+                        next_state = RAM_READ_1;
+                end
             end
             // Once accepted, a write owns its address and byte and must reach
             // SDRAM even if the short 25 MHz MEMW pulse has already ended.
@@ -265,10 +386,10 @@ module RAM (
                 // this access. The registered address is therefore still one
                 // cycle old here; use the live decode for ACTIVE only.
                 access_address  = {2'b00, decoded_address};
-                access_num      = 9'h001;
+                access_num      = start_prefetch ? 9'h002 : 9'h001;
                 access_data_in  = {8'h00, latch_data};
                 write_request   = write_command ? 1'b1 : 1'b0;
-                read_request    = read_command  ? 1'b1 : 1'b0;
+                read_request    = (read_command & ~lookahead_hit) ? 1'b1 : 1'b0;
                 sdram_ldqm      = 1'b0;
                 sdram_udqm      = 1'b0;
             end
@@ -292,7 +413,7 @@ module RAM (
             end
             RAM_READ_1: begin
                 access_address  = {2'b00, latch_address};
-                access_num      = 9'h001;
+                access_num      = prefetch_armed ? 9'h002 : 9'h001;
                 access_data_in  = 16'h0000;
                 write_request   = 1'b0;
                 read_request    = 1'b1;
@@ -301,7 +422,7 @@ module RAM (
             end
             RAM_READ_2: begin
                 access_address  = {2'b00, latch_address};
-                access_num      = 9'h001;
+                access_num      = prefetch_armed ? 9'h002 : 9'h001;
                 access_data_in  = 16'h0000;
                 write_request   = 1'b0;
                 read_request    = 1'b0;
@@ -335,39 +456,135 @@ module RAM (
     //
     logic   [7:0]   data_bus_out_reg;
 
+    // Which word of the burst is on access_data_out. KFSDRAM raises read_flag
+    // once per word, so in a burst of two the first pulse is the byte the CPU
+    // asked for and the second is the one being parked.
     always_ff @(posedge clock, posedge reset) begin
         if (reset)
-            data_bus_out_reg    <= 0;
+            read_beat <= 1'b0;
+        else if (state == IDLE)
+            read_beat <= 1'b0;
         else if (read_flag)
+            read_beat <= 1'b1;
+    end
+
+    // Whether the transaction in flight asked for two words. Sampled where the
+    // decision is made so access_num cannot change under KFSDRAM mid-burst,
+    // which would move the column count and the completion test with it.
+    always_ff @(posedge clock, posedge reset) begin
+        if (reset)
+            prefetch_armed <= 1'b0;
+        else if (state == IDLE)
+            prefetch_armed <= start_prefetch;
+    end
+
+    always_ff @(posedge clock, posedge reset) begin
+        if (reset)
+            data_bus_out_reg    <= 8'h00;
+        else if ((state == IDLE) && read_command && lookahead_hit)
+            data_bus_out_reg    <= lookahead_answer;
+        else if (read_flag && ~read_beat)
             data_bus_out_reg    <= access_data_out[7:0];
         else
             data_bus_out_reg    <= data_bus_out_reg;
     end
 
-    assign  data_bus_out = ~read_command ? 0 : ~read_flag ? data_bus_out_reg : access_data_out[7:0];
+    // The same combinational bypass the live path always had, but only for the
+    // word the CPU asked for: on the lookahead word access_data_out belongs to
+    // the NEXT address and must not reach the bus.
+    assign  data_bus_out = ~read_command            ? 8'h00
+                         : (read_flag & ~read_beat) ? access_data_out[7:0]
+                         :                            data_bus_out_reg;
+
+
+    //
+    // The lookahead latch
+    //
+    // A hit does not consume the entry. Re-reading the same byte is still a
+    // hit, and the only thing that can make the parked byte wrong is a write
+    // landing on it.
+    //
+    // Invalidation is done where the write is accepted rather than for as long
+    // as the strobe is asserted: in IDLE decoded_address is the address being
+    // captured into latch_address on this very edge, so it is the address the
+    // write will actually reach. Later in the write it tracks the live bus and
+    // no longer means that.
+    //
+    // Invalidation looks at both entries and the park writes one of them. The
+    // two cannot collide: a park happens on read_flag, which cannot be asserted
+    // while this module is in IDLE accepting a write.
+    always_ff @(posedge clock, posedge reset) begin
+        if (reset) begin
+            lookahead_valid     <= 2'b00;
+            lookahead_victim    <= 1'b0;
+            lookahead_address_0 <= 22'd0;
+            lookahead_address_1 <= 22'd0;
+            lookahead_data_0    <= 8'h00;
+            lookahead_data_1    <= 8'h00;
+        end
+        else begin
+            if ((state == IDLE) && write_command) begin
+                if (lookahead_valid[0] && (decoded_address == lookahead_address_0))
+                    lookahead_valid[0] <= 1'b0;
+                if (lookahead_valid[1] && (decoded_address == lookahead_address_1))
+                    lookahead_valid[1] <= 1'b0;
+            end
+
+            if (read_flag && read_beat && prefetch_armed) begin
+                if (lookahead_victim == 1'b0) begin
+                    lookahead_address_0 <= latch_address + 22'd1;
+                    lookahead_data_0    <= access_data_out[7:0];
+                    lookahead_valid[0]  <= 1'b1;
+                end
+                else begin
+                    lookahead_address_1 <= latch_address + 22'd1;
+                    lookahead_data_1    <= access_data_out[7:0];
+                    lookahead_valid[1]  <= 1'b1;
+                end
+                lookahead_victim <= ~lookahead_victim;
+            end
+        end
+    end
 
 
     //
     // Ready/Wait Signal
     //
-    // access_ready used to stay high through the whole access unless a
-    // refresh happened to already be in progress when the command was
-    // decoded. That makes RAM readiness effectively open-loop: at the
-    // fastest CPU speed setting the write command pulse (~2 CPU clocks) can
-    // close before the SDRAM controller has actually issued the write,
-    // silently dropping it (see docs/max-speed-stability.md, RC2). Track
-    // the access state machine directly instead: not ready as soon as a
-    // command is decoded in IDLE, ready again only once COMPLETE_RAM_RW is
-    // reached, i.e. after the SDRAM side has actually finished.
+    // Two policies, chosen by CPU speed.
+    //
+    // Open loop (the original): readiness stays high through the whole access
+    // unless a refresh was already in progress when the command was decoded.
+    // It bets that the bus cycle always outlasts the SDRAM transaction and
+    // never makes the CPU wait for the answer. Below the fastest setting that
+    // bet is safe with room to spare - at 4.77MHz the cycle is 44 chipset
+    // clocks against 7 for the transaction - and refresh_mode covers the one
+    // case where it is not.
+    //
+    // Closed loop: not ready as soon as a command is decoded in IDLE, ready
+    // again only at COMPLETE_RAM_RW, i.e. after the SDRAM side has actually
+    // finished. At the fastest setting the write command pulse is about two
+    // CPU clocks and can close before the controller has issued the write,
+    // silently dropping it (docs/max-speed-stability.md, RC2), so there the
+    // bet does not hold and the handshake has to be real.
+    //
+    // Charging the closed loop to every setting is what made this core 20%
+    // slower than the CGA core on every memory cycle at 4.77MHz while I/O
+    // cycles matched to within 0.03%.
+    wire    strict_ready = (clk_select == 2'b11);
+
     always_ff @(posedge clock, posedge reset) begin
         if (reset)
             access_ready <= 1'b0;
         else if (state == COMPLETE_RAM_RW)
             access_ready <= 1'b1;
         else if (state == IDLE)
-            access_ready <= idle & ~(write_command | read_command);
-        else
+            access_ready <= idle & ~(strict_ready & (write_command | read_command));
+        else if (strict_ready)
             access_ready <= 1'b0;
+        else if ((write_command | read_command) & refresh_mode)
+            access_ready <= 1'b0;
+        else
+            access_ready <= access_ready;
     end
 
     always_ff @(posedge clock, posedge reset) begin
