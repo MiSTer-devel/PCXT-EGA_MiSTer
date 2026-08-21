@@ -33,7 +33,8 @@ For an architectural overview and possible future improvements, see the
 
 ## Key features
 
-* 8088 CPU speed settings: 4.77 MHz, 7.16 MHz, 9.54 MHz, and a PC/AT 3.5 MHz equivalent (maximum speed)
+* Selectable 8088 or 8086 bus mode, applied safely with Reset & apply settings
+* CPU speed settings: 4.77 MHz, 7.16 MHz, 9.54 MHz, and a PC/AT 3.5 MHz equivalent (maximum speed)
 * IBM PC/XT 5160 and compatible systems
 * **EGA video**: sequencer, graphics controller, attribute controller and a four-plane VRAM, around the UM6845R CRTC
 * Dual EGA dot clock, 14.318181 MHz and 16.257 MHz, selected per mode as on real hardware
@@ -246,10 +247,16 @@ example, or running EGA-only software with nothing else in the picture.
 * Press Win + F12 on your keyboard.
   * Model: IBM PCXT.
   * CPU Speed: pick a speed.
+  * System & BIOS → CPU Type: choose 8088 (compatible default) or 8086.
   * FDD & HDD → HDD Image: FreeDOS_HD.img
   * System & BIOS → PCXT BIOS: choose a compatible system BIOS, such as `bios-micro8088-xtide.rom` from `SW/8088_bios/binaries/`.
   * System & BIOS → EGA BIOS: `ega_bios.rom`. **Required.**
 * Choose Reset & apply settings.
+
+The 8086 mode uses a six-byte prefetch queue and transfers aligned SDRAM words
+over its private 16-bit path. Odd words and the XT-class video and peripheral
+buses remain split into byte cycles. The fixed 4.77/7.16/9.54 MHz settings keep
+the existing 8088 microcode timing; maximum speed exposes the full bus benefit.
 
 ### The F12 keys
 

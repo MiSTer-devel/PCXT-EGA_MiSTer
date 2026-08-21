@@ -222,6 +222,20 @@ module CHIPSET_tm();
     logic   [2:0]   vsync_width_osd;
     logic   [2:0]   hsync_width_osd;
 
+    // The 8086 wide read path, declared because CHIPSET is connected with .*
+    // and the bench has to stay consistent with the module.
+    //
+    // NOTE: this bench does not currently build - see run_tests.sh - because
+    // the vendored sound sources use assignment patterns on unpacked wire
+    // arrays that Icarus rejects. So nothing below it runs, and none of it
+    // counts as coverage. The decode this path depends on is tested in
+    // ram_lookahead_tb, where there is a bench that actually executes.
+    logic           word_read_request = 1'b0;
+    logic           word_write_request = 1'b0;
+    logic  [15:0]   data_bus_word_in = 16'h0000;
+    wire   [15:0]   data_bus_word;
+    wire            word_read_possible;
+
     CHIPSET u_CHIPSET (.*);
 
     defparam u_CHIPSET.u_RAM.u_KFSDRAM.sdram_init_wait = 16'd10;
@@ -408,6 +422,52 @@ module CHIPSET_tm();
         cpu_address         = 20'h00000;
         cpu_data_bus        = 8'h00;
         #(`TB_CYCLE * 1);
+    end
+    endtask
+
+    // Hold an address on the bus long enough for the decode to settle, and
+    // report what the wide path says about it.
+    task TASK_EXPECT_WORD_POSSIBLE(input [19:0] addr, input expected,
+                                   input [8*80-1:0] label);
+    begin
+        #(`TB_CYCLE * 0);
+        cpu_address         = addr;
+        processor_status    = 3'b101;
+        #(`TB_CYCLE * 2);
+        if (word_read_possible !== expected) begin
+            $display("FAIL %0s: addr %05h says word_read_possible=%b, expected %b",
+                     label, addr, word_read_possible, expected);
+            tb_failures = tb_failures + 1;
+        end
+        #(`TB_CYCLE * 2);
+        processor_status    = 3'b111;
+        #(`TB_CYCLE * 1);
+        cpu_address         = 20'h00000;
+        #(`TB_CYCLE * 1);
+    end
+    endtask
+
+    // Kept for the day this bench builds again; see the note by the signal
+    // declarations. ram_lookahead_tb carries the version that runs.
+    task TASK_WORD_PATH();
+    begin
+        $display("***** 8086 WIDE READ PATH ***** at %d", tb_cycle_counter);
+
+        // Conventional memory and the ROM region are SDRAM and can be read
+        // wide. Video memory is not, and neither is the unmapped EMS frame:
+        // a wide read there would come back with whatever RAM.sv was holding,
+        // which is exactly the failure this signal exists to prevent.
+        TASK_EXPECT_WORD_POSSIBLE(20'h10000, 1'b1, "conventional RAM");
+        TASK_EXPECT_WORD_POSSIBLE(20'h9FFFE, 1'b1, "top of conventional RAM");
+        TASK_EXPECT_WORD_POSSIBLE(20'hA0000, 1'b0, "EGA video memory");
+        TASK_EXPECT_WORD_POSSIBLE(20'hB8000, 1'b0, "text video memory");
+        TASK_EXPECT_WORD_POSSIBLE(20'hF0000, 1'b1, "BIOS region");
+
+        // And the path itself is connected: with no request outstanding the
+        // word still tracks what RAM.sv is presenting, which is what says the
+        // wire goes where the port list claims it does.
+        TASK_EXPECT_TRUE("data_bus_word is driven from RAM",
+                         data_bus_word === u_CHIPSET.internal_data_bus_ram_word);
     end
     endtask
 
@@ -672,6 +732,8 @@ module CHIPSET_tm();
 `ifdef EGA_CHIPSET_SMOKE
         TASK_EGA_CHIPSET_SMOKE();
 `endif
+
+        TASK_WORD_PATH();
 
         $display("***** KEYBORD INPUT TEST ***** at %d", tb_cycle_counter);
         TASK_SEND_KEYBORD_SERIAL(11'b0_1010_1010_1_1);

@@ -268,6 +268,7 @@ module emu
 		"P1,System & BIOS;",
 		"P1-;",
 		"P1O7,Boot Splash Screen,Yes,No;",
+		"P1oV,CPU Type,8088,8086;",
 		"P1-;",
 		CONF_STR_ROM,
 		"P1FC2,ROM,EC00 BIOS:;",
@@ -326,6 +327,11 @@ module emu
     wire [1:0] buttons;
     wire [63:0] status;
     wire vga_mode13_osd = status[29];
+    // Status bit 63 is the pending CPU selection. The value presented to the
+    // BIU is latched only during reset; changing the menu alone cannot change
+    // queue depth or bus width while an instruction is in flight.
+    wire        cpu_type_8086_osd = status[63];
+    wire        is8086_applied;
     // Status bits 45:44 are the pending physical-monitor switch selection.
     // ega_monitor_profile_applied is only updated while the machine is held
     // in reset, just as a real EGA card samples its switches during POST.
@@ -603,6 +609,13 @@ module emu
         .reset_active (reset),
         .selected     (ega_monitor_profile_osd),
         .applied      (ega_monitor_profile_applied)
+    );
+
+    cpu_type_latch cpu_type_apply_latch (
+        .clock        (clk_chipset),
+        .reset_active (reset),
+        .selected_8086(cpu_type_8086_osd),
+        .is8086       (is8086_applied)
     );
 
     logic reset_cpu_ff = 1'b1;
@@ -1075,6 +1088,11 @@ module emu
     wire [19:0] cpu_ad_out;
     reg  [19:0] cpu_address;
     wire [7:0] cpu_data_bus;
+    wire [15:0] data_bus_word;          // 8086 wide read
+    wire [15:0] cpu_data_bus_word;       // 8086 wide write
+    wire        word_read_possible;      // SDRAM can serve the latched address wide
+    wire        word_read_request;
+    wire        word_write_request;
     wire processor_ready;
     wire interrupt_to_cpu;
     wire address_latch_enable;
@@ -1155,6 +1173,12 @@ module emu
 		.ext_access_request                 (bios_access_request),
 		.address_direction                  (address_direction),
 		.data_bus                           (data_bus),
+		// Private 16-bit SDRAM path, beside the public 8-bit chipset bus.
+		.word_read_request                  (word_read_request),
+		.word_write_request                 (word_write_request),
+		.data_bus_word_in                   (cpu_data_bus_word),
+		.data_bus_word                      (data_bus_word),
+		.word_read_possible                 (word_read_possible),
 		.data_bus_ext                       (bios_write_data[7:0]),
 	//	.data_bus_direction                 (data_bus_direction),
 		.address_latch_enable               (address_latch_enable),
@@ -1296,7 +1320,16 @@ module emu
 		.cycle_accrate(cycle_accrate),
 		.clock_cycle_counter_division_ratio(clock_cycle_counter_division_ratio),
 		.clock_cycle_counter_decrement_value(clock_cycle_counter_decrement_value),
-		.shift_read_timing(shift_read_timing)
+		.shift_read_timing(shift_read_timing),
+
+		// The OSD selection is frozen outside reset so queue depth and bus width
+		// cannot change in the middle of an instruction or bus cycle.
+		.is8086(is8086_applied),
+		.word_read_request(word_read_request),
+		.word_write_request(word_write_request),
+		.data_bus_word_out(cpu_data_bus_word),
+		.data_bus_word(data_bus_word),
+		.word_access_possible(word_read_possible)
 	);
 
     //

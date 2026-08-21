@@ -17,6 +17,23 @@ module RAM (
     input   logic   [19:0]  address,
     input   logic   [7:0]   internal_data_bus,
     output  logic   [7:0]   data_bus_out,
+    // Private 16-bit path for an 8086 bus cycle (steps 1 and 5 of
+    // docs/8086-adaptation.md). It transfers two consecutive low-lane bytes
+    // in one SDRAM burst while the chipset's public bus remains eight bits.
+    //
+    // Contract: either word request may only be asserted for an EVEN address.
+    // That is not a restriction in practice - an 8086 splits a word access at
+    // an odd offset into two byte cycles anyway, and offset parity equals
+    // linear parity because a segment base is always a multiple of 16 - and it
+    // is what makes the burst safe without a single extra gate. The SDRAM
+    // column adder wraps inside its row, so a burst of two is only correct
+    // when the first column is not 511; an even address has an even column,
+    // which is at most 510. The same evenness rules out straddling an EMS,
+    // UMB or video decode boundary, since every one of those is 16KB-aligned.
+    input   logic           word_read_request,
+    input   logic           word_write_request,
+    input   logic   [15:0]  data_bus_in_word,
+    output  logic   [15:0]  data_bus_out_word,
     input   logic           memory_read_n,
     input   logic           memory_write_n,
     input   logic           no_command_state,
@@ -60,6 +77,7 @@ module RAM (
     logic   [21:0]  decoded_address;
     logic   [21:0]  latch_address;
     logic   [7:0]   latch_data;
+    logic   [15:0]  latch_data_word;
     logic           write_command;
     logic           read_command;
     logic           prev_no_command_state;
@@ -140,6 +158,10 @@ module RAM (
     logic           lookahead_victim;       // Which entry the next park replaces
     logic           read_beat;              // 0 = first word of the burst, 1 = second
     logic           prefetch_armed;         // This transaction was issued as a burst of two
+    logic           word_armed;             // ...and the second word is being delivered, not parked
+    logic           write_word_armed;       // Two emulated bytes are being written in one SDRAM burst
+    logic           write_beat;             // 0 = low byte, 1 = high byte
+    logic   [7:0]   data_bus_out_hi;
 
     // Only the two fastest settings take the burst. The two slowest ones are
     // the cycle-accurate settings, and there the bus already has slack: at
@@ -165,7 +187,14 @@ module RAM (
                                        & (decoded_address == lookahead_address_0);
     wire            lookahead_hit_1    = lookahead_enable & lookahead_valid[1]
                                        & (decoded_address == lookahead_address_1);
-    wire            lookahead_hit      = lookahead_hit_0 | lookahead_hit_1;
+    wire            word_request       = read_command & word_read_request;
+    wire            write_word_request = write_command & word_write_request;
+
+    // A word access needs both halves, and the latch can only ever hold one of
+    // them, so a hit on the low byte would leave the high one unfetched. Take
+    // the SDRAM read instead - one burst answers the whole word.
+    wire            lookahead_hit      = ~word_request
+                                       & (lookahead_hit_0 | lookahead_hit_1);
 
     // Entry 0 is checked first; the two addresses can never both match, since
     // an address is only parked into one entry and a park into the other would
@@ -175,7 +204,16 @@ module RAM (
 
     // What a read leaving IDLE will do. Registered into prefetch_armed on the
     // same edge, so access_num is stable for the whole transaction.
-    wire            start_prefetch     = read_command & lookahead_possible & ~lookahead_hit;
+    //
+    // A word bursts unconditionally: it is not speculation, both halves were
+    // asked for. In particular it does not consult lookahead_enable, because
+    // an 8086 has a 16-bit bus at every speed setting - the gate exists to
+    // keep a throughput guess out of the cycle-accurate settings, and this is
+    // not a guess.
+    wire            start_prefetch     = read_command & ~word_request
+                                       & lookahead_possible & ~lookahead_hit;
+    wire            start_word         = word_request;
+    wire            start_word_write   = write_word_request;
 
     wire ems_bank_select = ems_b1 | ems_b2 | ems_b3 | ems_b4;
     wire ems_page_frame  = `ENABLE_EMS && (address[19:16] == 4'b1101);
@@ -238,6 +276,13 @@ module RAM (
             latch_data      <= 0;
         else if (state == IDLE)
             latch_data      <= internal_data_bus;
+    end
+
+    always_ff @(posedge clock, posedge reset) begin
+        if (reset)
+            latch_data_word <= 16'h0000;
+        else if (state == IDLE)
+            latch_data_word <= data_bus_in_word;
     end
 
     // Write Command
@@ -386,8 +431,10 @@ module RAM (
                 // this access. The registered address is therefore still one
                 // cycle old here; use the live decode for ACTIVE only.
                 access_address  = {2'b00, decoded_address};
-                access_num      = start_prefetch ? 9'h002 : 9'h001;
-                access_data_in  = {8'h00, latch_data};
+                access_num      = (start_prefetch | start_word | start_word_write) ? 9'h002 : 9'h001;
+                access_data_in  = write_word_request
+                                ? {8'h00, data_bus_in_word[7:0]}
+                                : {8'h00, latch_data};
                 write_request   = write_command ? 1'b1 : 1'b0;
                 read_request    = (read_command & ~lookahead_hit) ? 1'b1 : 1'b0;
                 sdram_ldqm      = 1'b0;
@@ -395,8 +442,11 @@ module RAM (
             end
             RAM_WRITE_1: begin
                 access_address  = {2'b00, latch_address};
-                access_num      = 9'h001;
-                access_data_in  = {8'h00, latch_data};
+                access_num      = write_word_armed ? 9'h002 : 9'h001;
+                access_data_in  = write_word_armed
+                                ? {8'h00, write_beat ? latch_data_word[15:8]
+                                                     : latch_data_word[7:0]}
+                                : {8'h00, latch_data};
                 write_request   = 1'b1;
                 read_request    = 1'b0;
                 sdram_ldqm      = 1'b0;
@@ -404,8 +454,11 @@ module RAM (
             end
             RAM_WRITE_2: begin
                 access_address  = {2'b00, latch_address};
-                access_num      = 9'h001;
-                access_data_in  = {8'h00, latch_data};
+                access_num      = write_word_armed ? 9'h002 : 9'h001;
+                access_data_in  = write_word_armed
+                                ? {8'h00, write_beat ? latch_data_word[15:8]
+                                                     : latch_data_word[7:0]}
+                                : {8'h00, latch_data};
                 write_request   = 1'b0;
                 read_request    = 1'b0;
                 sdram_ldqm      = 1'b0;
@@ -413,7 +466,7 @@ module RAM (
             end
             RAM_READ_1: begin
                 access_address  = {2'b00, latch_address};
-                access_num      = prefetch_armed ? 9'h002 : 9'h001;
+                access_num      = (prefetch_armed | word_armed) ? 9'h002 : 9'h001;
                 access_data_in  = 16'h0000;
                 write_request   = 1'b0;
                 read_request    = 1'b1;
@@ -422,7 +475,7 @@ module RAM (
             end
             RAM_READ_2: begin
                 access_address  = {2'b00, latch_address};
-                access_num      = prefetch_armed ? 9'h002 : 9'h001;
+                access_num      = (prefetch_armed | word_armed) ? 9'h002 : 9'h001;
                 access_data_in  = 16'h0000;
                 write_request   = 1'b0;
                 read_request    = 1'b0;
@@ -480,6 +533,61 @@ module RAM (
 
     always_ff @(posedge clock, posedge reset) begin
         if (reset)
+            word_armed <= 1'b0;
+        else if (state == IDLE)
+            word_armed <= start_word;
+    end
+
+    always_ff @(posedge clock, posedge reset) begin
+        if (reset)
+            write_word_armed <= 1'b0;
+        else if (state == IDLE)
+            write_word_armed <= start_word_write;
+    end
+
+    // KFSDRAM presents write_flag for each beat. Its first WRITE edge samples
+    // the low byte; advancing this local selector on that edge presents the
+    // high byte for the second beat without changing KFSDRAM's interface.
+    always_ff @(posedge clock, posedge reset) begin
+        if (reset)
+            write_beat <= 1'b0;
+        else if (state == IDLE)
+            write_beat <= 1'b0;
+        else if (write_flag)
+            write_beat <= 1'b1;
+    end
+
+    // The high half. The low half is data_bus_out_reg, which the byte path
+    // already registers on the first beat; this is the same store one beat
+    // later. Both are settled before COMPLETE_RAM_RW raises access_ready, so
+    // the word needs none of the combinational bypass the byte path has.
+    always_ff @(posedge clock, posedge reset) begin
+        if (reset)
+            data_bus_out_hi <= 8'h00;
+        else if (read_flag && read_beat && word_armed)
+            data_bus_out_hi <= access_data_out[7:0];
+    end
+
+    assign  data_bus_out_word = {data_bus_out_hi, data_bus_out_reg};
+
+    // synthesis translate_off
+    // The evenness contract, checked where it is cheap to check. A word read
+    // at an odd address would still return the right two bytes everywhere
+    // except column 511, where the burst wraps to the start of the same row -
+    // which is exactly the kind of once-per-512 corruption that is worth
+    // catching in simulation rather than on hardware.
+    always_ff @(posedge clock) begin
+        if (!reset && (state == IDLE) && word_request && decoded_address[0])
+            $display("%0t RAM: WORD READ AT ODD ADDRESS %05h - contract violated",
+                     $time, decoded_address);
+        if (!reset && (state == IDLE) && write_word_request && decoded_address[0])
+            $display("%0t RAM: WORD WRITE AT ODD ADDRESS %05h - contract violated",
+                     $time, decoded_address);
+    end
+    // synthesis translate_on
+
+    always_ff @(posedge clock, posedge reset) begin
+        if (reset)
             data_bus_out_reg    <= 8'h00;
         else if ((state == IDLE) && read_command && lookahead_hit)
             data_bus_out_reg    <= lookahead_answer;
@@ -528,8 +636,18 @@ module RAM (
                     lookahead_valid[0] <= 1'b0;
                 if (lookahead_valid[1] && (decoded_address == lookahead_address_1))
                     lookahead_valid[1] <= 1'b0;
+                if (write_word_request) begin
+                    if (lookahead_valid[0] && ((decoded_address + 22'd1) == lookahead_address_0))
+                        lookahead_valid[0] <= 1'b0;
+                    if (lookahead_valid[1] && ((decoded_address + 22'd1) == lookahead_address_1))
+                        lookahead_valid[1] <= 1'b0;
+                end
             end
 
+            // prefetch_armed and word_armed are mutually exclusive by
+            // construction, so a word transaction parks nothing. The byte it
+            // fetched second is on its way to the CPU, and spending an entry
+            // on a byte the CPU already holds would evict something useful.
             if (read_flag && read_beat && prefetch_armed) begin
                 if (lookahead_victim == 1'b0) begin
                     lookahead_address_0 <= latch_address + 22'd1;

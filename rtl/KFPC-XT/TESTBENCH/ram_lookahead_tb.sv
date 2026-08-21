@@ -50,7 +50,11 @@ module ram_lookahead_tb;
     logic        memory_write_n   = 1'b1;
     logic        no_command_state = 1'b1;
 
+    logic       word_req = 1'b0;
+    logic       word_write_req = 1'b0;
+    logic [15:0] word_data_in = 16'h0000;
     wire [7:0]  data_out;
+    wire [15:0] data_out_word;
     wire        memory_access_ready;
     wire        ram_address_select_n;
     wire        initilized_sdram;
@@ -71,6 +75,10 @@ module ram_lookahead_tb;
         .address               (address),
         .internal_data_bus     (data_in),
         .data_bus_out          (data_out),
+        .word_read_request     (word_req),
+        .word_write_request    (word_write_req),
+        .data_bus_in_word      (word_data_in),
+        .data_bus_out_word     (data_out_word),
         .memory_read_n         (memory_read_n),
         .memory_write_n        (memory_write_n),
         .no_command_state      (no_command_state),
@@ -266,6 +274,162 @@ module ram_lookahead_tb;
         end
     endtask
 
+    //------------------------------------------------------------------------
+    // The 16-bit read path
+    //------------------------------------------------------------------------
+    // Same bus cycle as read_held, with word_read_request raised alongside the
+    // address so that RAM.sv samples it on the edge it leaves IDLE - which is
+    // where start_word is decided and access_num fixed for the transaction.
+    integer acts_before;
+    logic [15:0] captured_word;
+
+    task automatic read_word_held(input logic [19:0] a);
+        integer guard;
+        begin
+            reads_before = sdram_reads;
+            acts_before  = sdram_activates;
+            @(negedge clock);
+            address          = a;
+            word_req         = 1'b1;
+            no_command_state = 1'b0;
+            memory_read_n    = 1'b0;
+
+            guard = 0;
+            while (memory_access_ready && (guard < 2000)) begin
+                @(posedge clock); #1; guard = guard + 1;
+            end
+            guard = 0;
+            while (!memory_access_ready && (guard < 2000)) begin
+                @(posedge clock); #1; guard = guard + 1;
+            end
+            if (!memory_access_ready)
+                fail_msg("word read never completed");
+
+            captured_word = data_out_word;
+            captured      = data_out;
+
+            @(negedge clock);
+            memory_read_n    = 1'b1;
+            word_req         = 1'b0;
+            no_command_state = 1'b1;
+            @(negedge clock);
+        end
+    endtask
+
+    // Three properties, and none of them is the test on its own:
+    //   * both halves are what memory holds - a word path that returns the
+    //     right low byte and a stale high byte is the failure that matters,
+    //     because the high byte is the one nothing else would catch;
+    //   * the byte path still returns the low half unchanged, so that widening
+    //     the read cannot have broken the 8-bit bus underneath it;
+    //   * it cost ONE SDRAM transaction. Two would mean the word was assembled
+    //     from two accesses, which is what the split already does and is the
+    //     whole thing this is meant to replace.
+    task automatic check_word(input logic [19:0] a, input string label);
+        integer issued_acts;
+        logic [15:0] expect_word;
+        begin
+            expect_word = {expected_byte(a + 20'd1), expected_byte(a)};
+            read_word_held(a);
+            issued_acts = sdram_activates - acts_before;
+
+            if (captured_word !== expect_word)
+                fail_msg($sformatf("%s: addr %05h returned %04h, memory holds %04h",
+                                   label, a, captured_word, expect_word));
+            else if (captured !== expect_word[7:0])
+                fail_msg($sformatf("%s: addr %05h byte path returned %02h, word says %02h",
+                                   label, a, captured, expect_word[7:0]));
+            else if (issued_acts != 1)
+                fail_msg($sformatf("%s: addr %05h correct but cost %0d SDRAM transactions, not 1",
+                                   label, a, issued_acts));
+            else begin
+                pass_count = pass_count + 1;
+                $display("  PASS  %-34s addr %05h -> %04h  (%0d transaction)",
+                         label, a, captured_word, issued_acts);
+            end
+        end
+    endtask
+
+    task automatic check_word_write(input logic [19:0] a,
+                                    input logic [15:0] value,
+                                    input string label);
+        integer writes_before, issued_acts, issued_writes, failures_before;
+        integer guard;
+        begin
+            failures_before = fail_count;
+            writes_before = sdram_writes;
+            acts_before = sdram_activates;
+            @(negedge clock);
+            address          = a;
+            data_in          = value[7:0];
+            word_data_in     = value;
+            word_write_req   = 1'b1;
+            no_command_state = 1'b0;
+            memory_write_n   = 1'b0;
+
+            guard = 0;
+            while (memory_access_ready && (guard < 2000)) begin
+                @(posedge clock); #1; guard = guard + 1;
+            end
+            guard = 0;
+            while (!memory_access_ready && (guard < 2000)) begin
+                @(posedge clock); #1; guard = guard + 1;
+            end
+            if (!memory_access_ready)
+                fail_msg($sformatf("%s: word write never completed", label));
+
+            @(negedge clock);
+            memory_write_n   = 1'b1;
+            word_write_req   = 1'b0;
+            no_command_state = 1'b1;
+            @(negedge clock);
+
+            issued_acts = sdram_activates - acts_before;
+            issued_writes = sdram_writes - writes_before;
+            if (issued_acts != 1)
+                fail_msg($sformatf("%s: used %0d SDRAM transactions, expected 1",
+                                   label, issued_acts));
+            if (issued_writes != 2)
+                fail_msg($sformatf("%s: issued %0d SDRAM write beats, expected 2",
+                                   label, issued_writes));
+            if (fail_count == failures_before) begin
+                pass_count = pass_count + 1;
+                $display("  PASS  %-34s addr %05h <- %04h  (1 transaction, 2 beats)",
+                         label, a, value);
+            end
+        end
+    endtask
+
+    // Which addresses the wide read path may be used for. Chipset.sv exports
+    // this as word_read_possible, straight off ram_address_select_n, and the
+    // CPU has to consult it before committing to a 16-bit cycle: outside the
+    // SDRAM's own decode a wide read would come back holding whatever RAM.sv
+    // last had, with no bus cycle to show for it.
+    //
+    // This is tested here rather than in Chipset_tb because Chipset_tb does not
+    // build - the vendored sound sources use assignment patterns on unpacked
+    // wire arrays that Icarus rejects - so tests written there would look like
+    // coverage without ever running.
+    task automatic check_wide_allowed(input logic [19:0] a,
+                                      input bit          expect_allowed,
+                                      input string       label);
+        begin
+            @(negedge clock);
+            address = a;
+            #1;
+            if ((~ram_address_select_n) !== expect_allowed)
+                fail_msg($sformatf("%s: addr %05h allows wide=%b, expected %b",
+                                   label, a, ~ram_address_select_n, expect_allowed));
+            else begin
+                pass_count = pass_count + 1;
+                $display("  PASS  %-34s addr %05h -> wide %s",
+                         label, a, expect_allowed ? "allowed" : "refused");
+            end
+            address = 20'h00000;
+            @(negedge clock);
+        end
+    endtask
+
     task automatic wait_idle;
         integer guard;
         begin
@@ -426,6 +590,108 @@ module ram_lookahead_tb;
         check_read(20'h03001, expected_byte(20'h03001), 1'b1, "back on: streams again");
         clk_select = 2'b00;
         check_read(20'h03002, expected_byte(20'h03002), 1'b0, "gate low: no hit from latch");
+
+        // ====================================================================
+        // The 16-bit read path (docs/8086-adaptation.md, step 1)
+        // ====================================================================
+        // Nothing drives word_read_request in the chipset yet, so on hardware
+        // this path does not exist. These cases are what says it is ready for
+        // step 2 to carry it to the CPU.
+        clk_select = 2'b11;
+        wait_idle;
+
+        check_word(20'h01100, "word read, one transaction");
+
+        // A word parks nothing. The second byte was delivered to the CPU, not
+        // guessed at, so spending a latch entry on it would evict something
+        // useful to hold a byte the CPU already has.
+        check_read(20'h01101, expected_byte(20'h01101), 1'b0, "word parked nothing");
+
+        // The latch can only ever hold one half of a word, so a hit on the low
+        // byte would leave the high one unfetched.
+        //
+        // The priming address is the point of this case and it is easy to get
+        // wrong: reading 01200 parks 012*01*, which a word read at 01200 can
+        // never match, so that arrangement exercises nothing. To put the word's
+        // OWN low byte in the latch, read the byte below it. First written the
+        // other way round, and the mutation that lets a word take a hit sailed
+        // through.
+        check_read(20'h0160F, expected_byte(20'h0160F), 1'b0, "park the word's low byte");
+        check_word(20'h01610, "word ignores its own hit");
+
+        // A word read must not disturb an entry it has nothing to do with.
+        check_read(20'h01300, expected_byte(20'h01300), 1'b0, "arm at 01301");
+        check_word(20'h01400, "unrelated word read");
+        check_read(20'h01301, expected_byte(20'h01301), 1'b1, "entry survived the word");
+
+        // The row boundary cannot bite a word read, and this is why: the burst
+        // only wraps when the first column is 511, and an even address has an
+        // even column. 0001FE is the last even address in the row - columns 510
+        // and 511 - and 000200 is the first in the next one.
+        check_word(20'h001FE, "last word in the row");
+        check_word(20'h00200, "first word in the next row");
+
+        // An 8086 has a 16-bit bus at every speed setting. The burst gate is
+        // there to keep a throughput guess out of the cycle-accurate settings,
+        // and a word the CPU actually asked for is not a guess - so this must
+        // work with the gate low, exactly as it does with it high.
+        clk_select = 2'b00;
+        wait_idle;
+        check_word(20'h01500, "word at 4.77MHz, gate low");
+        check_read(20'h01501, expected_byte(20'h01501), 1'b0, "still no latch at 4.77MHz");
+        check_word_write(20'h01700, 16'hA62D, "word write at 4.77MHz");
+        check_read(20'h01700, 8'h2D, 1'b0, "word write low at 4.77MHz");
+        check_read(20'h01701, 8'hA6, 1'b0, "word write high at 4.77MHz");
+        clk_select = 2'b11;
+
+        // ---- the matching 16-bit write path (step 5) -----------------------
+        // The current SDRAM layout stores one emulated byte in the low lane of
+        // each SDRAM word. A wide CPU write is therefore a two-beat burst, not
+        // a byte-masked write, and must place a different byte on each beat.
+        check_word_write(20'h01A00, 16'hC35A, "word write, one transaction");
+        check_read(20'h01A00, 8'h5A, 1'b0, "word write low byte");
+        check_read(20'h01A01, 8'hC3, 1'b1, "word write high byte");
+
+        // A wide write invalidates a parked copy of either address. Prime the
+        // high byte specifically; checking it after the write must miss and
+        // return the replacement value rather than stale lookahead data.
+        check_read(20'h01B00, expected_byte(20'h01B00), 1'b0, "park word high byte");
+        check_word_write(20'h01B00, 16'h7E19, "word write invalidates high byte");
+        check_read(20'h01B01, 8'h7E, 1'b0, "written high byte, latch dropped");
+
+        // And the benefit, in the same unit the byte sweep above uses.
+        wait_idle;
+        sweep_reads = sdram_activates;
+        for (i = 20'h01800; i < 20'h01840; i = i + 2) begin
+            read_word_held(i[19:0]);
+            if (captured_word !== {expected_byte(i[19:0] + 20'd1), expected_byte(i[19:0])})
+                fail_msg($sformatf("word sweep: addr %05h returned %04h, memory holds %04h",
+                                   i[19:0], captured_word,
+                                   {expected_byte(i[19:0] + 20'd1), expected_byte(i[19:0])}));
+        end
+        sweep_reads = sdram_activates - sweep_reads;
+
+        $display("");
+        $display("  word sweep: 64 bytes cost %0d SDRAM transactions (64 as bytes, ~32 with the latch)",
+                 sweep_reads);
+        if (sweep_reads != 32)
+            fail_msg($sformatf("word sweep: %0d transactions for 32 words, expected 32", sweep_reads));
+        else begin
+            pass_count = pass_count + 1;
+            $display("  PASS  a word costs one transaction, every time");
+        end
+
+        // ---- where the wide path is allowed to be used ----------------------
+        wait_idle;
+        check_wide_allowed(20'h00000, 1'b1, "bottom of conventional RAM");
+        check_wide_allowed(20'h10000, 1'b1, "conventional RAM");
+        check_wide_allowed(20'h9FFFE, 1'b1, "top of conventional RAM");
+        check_wide_allowed(20'hA0000, 1'b0, "EGA video memory");
+        check_wide_allowed(20'hB8000, 1'b0, "text video memory");
+        check_wide_allowed(20'hBFFFE, 1'b0, "top of video memory");
+        check_wide_allowed(20'hC0000, 1'b1, "EGA BIOS region");
+        check_wide_allowed(20'hF0000, 1'b1, "system BIOS region");
+        check_wide_allowed(20'hFFFFE, 1'b1, "top of memory");
 
         $display("");
         $display("%0d passed, %0d failed", pass_count, fail_count);
