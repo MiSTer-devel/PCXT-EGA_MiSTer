@@ -34,7 +34,9 @@ For an architectural overview and possible future improvements, see the
 ## Key features
 
 * Selectable 8088 or 8086 bus mode, applied safely with Reset & apply settings
-* CPU speed settings: 4.77 MHz, 7.16 MHz, 9.54 MHz, and a PC/AT 3.5 MHz equivalent (maximum speed)
+* CPU speed settings: 4.77 MHz, 7.16 MHz, 9.54 MHz and **Max**. Max is the
+  unthrottled performance profile shared by 8088 and 8086; it is neither a
+  historical CPU grade nor cycle-accurate.
 * IBM PC/XT 5160 and compatible systems
 * **EGA video**: sequencer, graphics controller, attribute controller and a four-plane VRAM, around the UM6845R CRTC
 * Dual EGA dot clock, 14.318181 MHz and 16.257 MHz, selected per mode as on real hardware
@@ -256,7 +258,10 @@ example, or running EGA-only software with nothing else in the picture.
 The 8086 mode uses a six-byte prefetch queue and transfers aligned SDRAM words
 over its private 16-bit path. Odd words and the XT-class video and peripheral
 buses remain split into byte cycles. The fixed 4.77/7.16/9.54 MHz settings keep
-the existing 8088 microcode timing; maximum speed exposes the full bus benefit.
+their cycle-accurate timing floor while the shared EU and selected BIU account
+for each transfer; Max bypasses the nominal timing counter and exposes the
+full bus benefit. The default 8088 keeps its four-byte queue and byte-wide
+memory transfers in every profile.
 
 ### The F12 keys
 
@@ -273,7 +278,7 @@ the existing 8088 microcode timing; maximum speed exposes the full bus benefit.
 ## Known limitations
 
 None specific to CPU speed remain. Two issues that used to affect the
-**PC/AT 3.5 MHz** (maximum speed) setting are fixed in the current RTL:
+**Max** setting are fixed in the current RTL:
 
 * The former intermittent memory fault: an accepted RAM write is now retained
   until it reaches SDRAM even when its short CPU-side `MEMW` pulse overlaps a
@@ -283,8 +288,7 @@ None specific to CPU speed remain. Two issues that used to affect the
 * The intermittent IBM 5160 BIOS `101` at that speed: the 8088 core now
   samples `INTR` at instruction boundaries instead of asynchronously
   mid-instruction, closing a hot-interrupt race in the POST's PIC/PIT check.
-  Hardware testing confirms the POST now completes without `101` at maximum
-  speed.
+  Hardware testing confirms the POST now completes without `101` at Max.
 
 Video is not affected by either fix. I/O writes to the video ports cross into
 the video clock domain as posted writes with a guaranteed pulse width, so they
@@ -295,7 +299,7 @@ An older prebuilt RBF will not contain these source changes.
 
 See [docs/known-issues.md](docs/known-issues.md) for what remains open, and
 [docs/max-speed-stability.md](docs/max-speed-stability.md) for the analysis
-behind how the fastest CPU speed setting is built — what makes it fragile,
+behind how the Max CPU speed setting is built — what makes it fragile,
 which parts were fixed and how, and what is still outstanding.
 
 ## RTC/CMOS port
@@ -400,7 +404,7 @@ only pre-formatted images, as it will not be possible to format them from MS-DOS
 * `SW/vga/` — `vgatsr.asm` and the assembled `vgatsr.com`
 * `SW/ROMs/` — scripts for preparing system ROMs
 * `SW/8088_bios/` — Micro8088 BIOS sources and binaries
-* `docs/` — open issues, and the root-cause analysis of the fastest CPU speed setting
+* `docs/` — open issues, and the root-cause analysis of the Max CPU speed setting
 * `docs/report/` — source for the [technical report](https://aitorgomez.net/pcxt-ega/core-report)
 
 ## Developers

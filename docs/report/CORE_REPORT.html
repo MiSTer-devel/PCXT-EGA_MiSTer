@@ -1409,7 +1409,7 @@
             draining write reaches the card late and has to be given the trip
             from there. At the three lower CPU speeds the bus cycle is longer
             than the trip and the hold never becomes the thing that ends it. At
-            the fastest setting it is what stops the CPU latching the bus while
+            Max it is what stops the CPU latching the bus while
             the answer is still crossing, which is what corrupted palette reads
             and, through them, any software that fades by reading the palette
             back and scaling it.
@@ -1417,7 +1417,7 @@
           <p>
             The alternative — sampling the live bus and trusting the pulse to
             be wide enough — works comfortably at the three lower CPU speeds
-            and fails at the fastest one, where an I/O write can be four
+            and fails at Max, where an I/O write can be four
             chipset clocks. Losing a CRTC index leaves the data byte that
             follows in whatever register the index last named, so the damage
             accumulates rather than showing up at once. Handling it by
@@ -1820,9 +1820,10 @@
           <article class="feature-card" data-label="CPU">
             <h3>Processor and timing</h3>
             <ul>
-              <li>MCL86-based 8088 CPU, in Boogermann's rewrite, which passes the 3M-case SingleStepTests/8088 suite in full.</li>
-              <li>4.77 MHz, 7.16 MHz and 9.54 MHz with a cycle-accurate target.</li>
-              <li>Fast mode equivalent to a 3.5 MHz PC/AT 286 - see the note on its current state below.</li>
+              <li>MCL86 CPU with a selectable 8088 or 8086 BIU. The shared EU derives from Boogermann's rewrite, which passes the 3M-case SingleStepTests/8088 suite in full.</li>
+              <li>8086 mode has a six-byte prefetch queue and wide aligned SDRAM word transfers; 8088 retains its four-byte queue and byte-wide transfers. Odd words and the XT-class I/O/video path remain byte-split.</li>
+              <li>4.77 MHz, 7.16 MHz and 9.54 MHz with a cycle-accurate target in both CPU modes.</li>
+              <li><strong>Max</strong>: an unthrottled performance profile for both CPU modes, not a historical speed grade or a cycle-accurate profile.</li>
               <li>Clock selection from the OSD.</li>
             </ul>
           </article>
@@ -2028,9 +2029,9 @@
         <div class="callout">
           <div class="callout-mark">✓</div>
           <div>
-            <strong>Two fixes at the fastest CPU setting</strong>
+            <strong>Two fixes at Max</strong>
             <p>
-              The former intermittent memory fault at <em>PC/AT 3.5 MHz</em> was
+              The former intermittent memory fault at <em>Max</em> was
               caused by the 8088 write pulse ending before a refresh-induced wait
               could reach the CPU. RAM now retains an accepted address and byte
               until the SDRAM write completes. A regression covers every clock of
@@ -2048,13 +2049,13 @@
               boundaries, which could race the POST's PIC/PIT hot-interrupt
               check. The core now samples <code>INTR</code> synchronously at
               each instruction boundary, and hardware testing confirms the POST
-              completes without <code>101</code> at maximum speed.
+              completes without <code>101</code> at Max.
             </p>
             <p>
               This <code>INTR</code>-sampling defect is not new. It was fixed
               once already, years earlier, and the fix was silently lost when
               the CPU core was resynced from its upstream source — well before
-              the EGA work, and before this build's own maximum-speed baseline.
+              the EGA work, and before this build's own Max baseline.
               Being a genuine race between two asynchronous events rather than
               a missing feature, the regression stayed dormant without a visible
               symptom until unrelated timing changes elsewhere in the design
@@ -2105,7 +2106,7 @@
                 </tr>
                 <tr>
                   <td>CPU</td>
-                  <td>4.77 MHz, 7.16 MHz, 9.54 MHz and fast PC/AT mode.</td>
+                  <td>4.77 MHz, 7.16 MHz, 9.54 MHz and Max (unthrottled).</td>
                 </tr>
                 <tr>
                   <td>Audio and video</td>

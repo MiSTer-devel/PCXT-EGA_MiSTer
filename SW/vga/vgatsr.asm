@@ -270,7 +270,7 @@ clear_framebuffer:
 ; byte, not the port. RET leaves the compare flags intact, and nothing at all is
 ; clobbered - not even AL, which the previous port-reading version did use.
 ;
-; Why cached. At the PC/AT 3.5MHz setting an I/O cycle is only a few video
+; Why cached. At Max an I/O cycle is only a few video
 ; clocks wide and a 3CDh read can come back 00h with the option switched on -
 ; see RC12 in docs/vga-mode13-palette.md. Every VGA-only call the hook serves is
 ; gated on this, so a bad read makes the hook chain to the EGA BIOS, which
