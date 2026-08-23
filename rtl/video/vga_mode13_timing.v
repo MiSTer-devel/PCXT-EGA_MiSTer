@@ -1,9 +1,10 @@
 //============================================================================
 //
-//  VGA mode 13h 320x200 timing, re-timed onto a 15 kHz CRT TV compatible
-//  raster instead of the original free-running ~31.4 kHz mode 13h scan.
+//  VGA mode 13h 320x200 timing. The selectable Native profile restores the
+//  original free-running ~31.4 kHz / 70 Hz Mode 13h scan; the 60 Hz profile
+//  is the 15 kHz CRT-TV-compatible raster used by older builds.
 //
-//  The geometry below is the CGA/EGA 200-line raster, dot for dot: 1824
+//  The 60 Hz geometry below is the CGA/EGA 200-line raster, dot for dot: 1824
 //  clk_28_636 clocks/line (912 CGA dots at 14.318 MHz, ~15.70 kHz) and 262
 //  lines/frame (~59.9 Hz), with the active window, sync width and porches in
 //  the same places. A TV therefore sees a signal geometrically identical to
@@ -25,6 +26,9 @@ module vga_mode13_timing(
     input  wire        clock,
     input  wire        reset,
     input  wire        enable,
+    input  wire        native_70hz,
+    // 00 320x200, 01 360x200, 10 320x240. Packed Mode 13h supplies 00.
+    input  wire [1:0]  mode_x_profile,
     input  wire [3:0]  crt_h_offset,
     input  wire [2:0]  crt_v_offset,
     output wire [9:0]  pixel_x,
@@ -42,20 +46,60 @@ module vga_mode13_timing(
     // 320 source pixels x 4 clocks = the 1280 clocks CGA spends on its 640
     // dots; the porches are CGA's 80/80/112 dots, also doubled, less the 16
     // clocks of bias described below.
-    localparam [10:0] H_ACTIVE = 11'd1280;
-    localparam [10:0] H_FRONT  = 11'd144;
-    localparam [10:0] H_SYNC   = 11'd160;
-    localparam [10:0] H_BACK   = 11'd240;
-    localparam [10:0] H_TOTAL  = H_ACTIVE + H_FRONT + H_SYNC + H_BACK;
+    localparam [10:0] TV_H_ACTIVE = 11'd1280;
+    localparam [10:0] TV_H_FRONT  = 11'd144;
+    localparam [10:0] TV_H_SYNC   = 11'd160;
+    localparam [10:0] TV_H_BACK   = 11'd240;
+    localparam [10:0] TV_H_TOTAL  = TV_H_ACTIVE + TV_H_FRONT + TV_H_SYNC + TV_H_BACK;
 
     // CGA's 200-line field: 24 lines of front porch, a 16-line VSYNC and 22
     // lines of back porch around the 200 active lines, again with a 1-line
     // bias applied.
-    localparam [9:0] V_ACTIVE = 10'd200;
-    localparam [9:0] V_FRONT  = 10'd25;
-    localparam [9:0] V_SYNC   = 10'd16;
-    localparam [9:0] V_BACK   = 10'd21;
-    localparam [9:0] V_TOTAL  = V_ACTIVE + V_FRONT + V_SYNC + V_BACK;
+    localparam [9:0] TV_V_ACTIVE = 10'd200;
+    localparam [9:0] TV_V_FRONT  = 10'd25;
+    localparam [9:0] TV_V_SYNC   = 10'd16;
+    localparam [9:0] TV_V_BACK   = 10'd21;
+    localparam [9:0] TV_V_TOTAL  = TV_V_ACTIVE + TV_V_FRONT + TV_V_SYNC + TV_V_BACK;
+
+    // These are the original timing constants from the first Mode 13h
+    // implementation. With the existing 28.636 MHz clock they are 31.4 kHz
+    // and 69.99 Hz (28.636 MHz / 912 / 449), so no PLL is needed.
+    localparam [10:0] NATIVE_H_ACTIVE = 11'd640;
+    localparam [10:0] NATIVE_H_FRONT  = 11'd24;
+    localparam [10:0] NATIVE_H_SYNC   = 11'd96;
+    localparam [10:0] NATIVE_H_BACK   = 11'd152;
+    localparam [10:0] NATIVE_H_TOTAL  = NATIVE_H_ACTIVE + NATIVE_H_FRONT + NATIVE_H_SYNC + NATIVE_H_BACK;
+    localparam [9:0]  NATIVE_V_ACTIVE = 10'd200;
+    localparam [9:0]  NATIVE_V_FRONT  = 10'd12;
+    localparam [9:0]  NATIVE_V_SYNC   = 10'd2;
+    localparam [9:0]  NATIVE_V_BACK   = 10'd235;
+    localparam [9:0]  NATIVE_V_TOTAL  = NATIVE_V_ACTIVE + NATIVE_V_FRONT + NATIVE_V_SYNC + NATIVE_V_BACK;
+
+    localparam [1:0] PROFILE_360X200 = 2'd1;
+    localparam [1:0] PROFILE_320X240 = 2'd2;
+    wire mode_x_360 = (mode_x_profile == PROFILE_360X200);
+    wire mode_x_240 = (mode_x_profile == PROFILE_320X240);
+
+    // Keep both output-raster totals unchanged. 360-wide mode borrows blank
+    // time for its wider active area; 320x240 borrows vertical blank time.
+    // The 60 Hz path therefore remains a 15.70 kHz / 59.9 Hz TV raster with
+    // no PLL. Native preserves its existing 31.4 kHz / 70 Hz frame totals.
+    wire [10:0] h_active = mode_x_360 ? (native_70hz ? 11'd720 : 11'd1440)
+                                       : (native_70hz ? NATIVE_H_ACTIVE : TV_H_ACTIVE);
+    wire [10:0] h_front  = mode_x_360 ? (native_70hz ? 11'd24 : 11'd112)
+                                       : (native_70hz ? NATIVE_H_FRONT : TV_H_FRONT);
+    wire [10:0] h_sync   = native_70hz ? NATIVE_H_SYNC : TV_H_SYNC;
+    wire [10:0] h_total  = native_70hz ? NATIVE_H_TOTAL : TV_H_TOTAL;
+    wire [9:0]  v_active = mode_x_240 ? 10'd240
+                                       : (native_70hz ? NATIVE_V_ACTIVE : TV_V_ACTIVE);
+    // 240 direct lines leave only 22 raster lines blank in the 262-line 60 Hz
+    // profile. This is deliberately exposed for hardware testing; an eight
+    // line front porch still leaves CRT V offsets 0..7 safe from underflow.
+    wire [9:0]  v_front  = mode_x_240 ? (native_70hz ? 10'd12 : 10'd8)
+                                       : (native_70hz ? NATIVE_V_FRONT : TV_V_FRONT);
+    wire [9:0]  v_sync   = mode_x_240 ? (native_70hz ? 10'd2 : 10'd3)
+                                       : (native_70hz ? NATIVE_V_SYNC : TV_V_SYNC);
+    wire [9:0]  v_total  = native_70hz ? NATIVE_V_TOTAL : TV_V_TOTAL;
 
     // CRT H/V offset (PCXT-EGA.sv OSD), matching how the EGA CRTC applies the
     // same two settings. There, a higher offset takes delay off HSYNC/VSYNC
@@ -70,14 +114,14 @@ module vga_mode13_timing(
     // centre the EGA path centre this one too and a single setting serves both.
     // H_TOTAL/V_TOTAL are untouched by the offsets, so the TV never loses lock
     // while adjusting.
-    wire [10:0] eff_H_FRONT = H_FRONT - {5'd0, crt_h_offset, 2'd0};
-    wire [9:0]  eff_V_FRONT = V_FRONT - {7'd0, crt_v_offset};
+    wire [10:0] eff_h_front = native_70hz ? h_front : h_front - {5'd0, crt_h_offset, 2'd0};
+    wire [9:0]  eff_v_front = native_70hz ? v_front : v_front - {7'd0, crt_v_offset};
 
     reg [10:0] h_count = 11'd0;
     reg [9:0]  v_count = 10'd0;
 
-    wire h_last = (h_count == H_TOTAL - 11'd1);
-    wire v_last = (v_count == V_TOTAL - 10'd1);
+    wire h_last = (h_count == h_total - 11'd1);
+    wire v_last = (v_count == v_total - 10'd1);
 
     always @(posedge clock or posedge reset) begin
         if (reset) begin
@@ -97,30 +141,28 @@ module vga_mode13_timing(
         end
     end
 
-    // Source pixel index: one framebuffer pixel per 4 clocks, so 0..319
-    // across the active window.
-    assign pixel_x = {1'b0, h_count[10:2]};
+    // Native doubles every source pixel; the 60 Hz profile quadruples it to
+    // preserve its 640-pixel active width on the 15 kHz raster.
+    assign pixel_x = native_70hz ? {1'b0, h_count[10:1]} : {1'b0, h_count[10:2]};
     assign pixel_y = v_count;
-    assign active = enable && (h_count < H_ACTIVE) && (v_count < V_ACTIVE);
-    assign hblank = !enable || (h_count >= H_ACTIVE);
-    assign vblank = !enable || (v_count >= V_ACTIVE);
+    assign active = enable && (h_count < h_active) && (v_count < v_active);
+    assign hblank = !enable || (h_count >= h_active);
+    assign vblank = !enable || (v_count >= v_active);
     assign hsync = enable &&
-                   (h_count >= (H_ACTIVE + eff_H_FRONT)) &&
-                   (h_count <  (H_ACTIVE + eff_H_FRONT + H_SYNC));
+                   (h_count >= (h_active + eff_h_front)) &&
+                   (h_count <  (h_active + eff_h_front + h_sync));
     assign vsync = enable &&
-                   (v_count >= (V_ACTIVE + eff_V_FRONT)) &&
-                   (v_count <  (V_ACTIVE + eff_V_FRONT + V_SYNC));
+                   (v_count >= (v_active + eff_v_front)) &&
+                   (v_count <  (v_active + eff_v_front + v_sync));
     assign line_start = enable && (h_count == 11'd0);
     assign frame_start = line_start && (v_count == 10'd0);
 
-    // pixel_toggle flips once per output pixel - every 2 clocks, so the 1280
-    // active clocks measure as 640 pixels, matching what the framework reports
-    // for the CGA/EGA modes rather than the 320 source pixels or the raw
-    // dot-clock count. A level toggle, safe to cross a clock domain with a
-    // single synchroniser stage and an XOR, unlike a one-cycle pulse.
-    wire [9:0] out_pixel_x = h_count[10:1];
+    // pixel_toggle flips once per physical output pixel. The native profile
+    // has a 28.636 MHz pixel clock; the 60 Hz profile emits one pixel every
+    // two clocks so its 1280 active clocks remain 640 output pixels.
+    wire [10:0] out_pixel_x = native_70hz ? h_count : {1'b0, h_count[10:1]};
 
-    reg [9:0] out_pixel_x_q = 10'd0;
+    reg [10:0] out_pixel_x_q = 11'd0;
     wire      pixel_tick = enable && (out_pixel_x != out_pixel_x_q);
 
     always @(posedge clock or posedge reset) begin

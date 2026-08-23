@@ -151,6 +151,7 @@ module PERIPHERALS #(
         output  logic   [11:0]  ega_active_dots,
         output  logic   [9:0]   ega_active_lines,
         input   logic           vga_mode13_osd,
+        input   logic           vga_mode13_native,
         input   logic   [1:0]   ega_monitor_profile,
         output  logic           vga_mode13_active_out,
         output  logic           vga_mode13_pixel_toggle_out,
@@ -162,9 +163,13 @@ module PERIPHERALS #(
     );
 
     wire vga_mode13_active_video;
+    wire vga_planar_memory_active_video;
     logic vga_mode13_active_sync1;
     logic vga_mode13_active_sync2;
+    logic vga_planar_memory_active_sync1;
+    logic vga_planar_memory_active_sync2;
     wire vga_mode13_active_sys = vga_mode13_active_sync2;
+    wire vga_planar_memory_active_sys = vga_planar_memory_active_sync2;
     assign vga_mode13_active_out = vga_mode13_active_video;
 
     // Assert reset immediately, but release it in the clock domain that
@@ -1028,9 +1033,13 @@ end
         if (reset) begin
             vga_mode13_active_sync1 <= 1'b0;
             vga_mode13_active_sync2 <= 1'b0;
+            vga_planar_memory_active_sync1 <= 1'b0;
+            vga_planar_memory_active_sync2 <= 1'b0;
         end else begin
             vga_mode13_active_sync1 <= vga_mode13_active_video;
             vga_mode13_active_sync2 <= vga_mode13_active_sync1;
+            vga_planar_memory_active_sync1 <= vga_planar_memory_active_video;
+            vga_planar_memory_active_sync2 <= vga_planar_memory_active_sync1;
         end
     end
 
@@ -1236,9 +1245,12 @@ end
         .ega_enabled                (1'b1),
         .ega_monitor_profile        (ega_monitor_profile_sync),
         .vga_enabled               (vga_mode13_osd),
+        .vga_mode13_native         (vga_mode13_native),
         .vga_mode13_set            (1'b0),
         .vga_mode13_clear          (1'b0),
         .vga_mode13_active_out     (vga_mode13_active_video),
+        .vga_unchained256_active_out(),
+        .vga_planar_memory_active_out(vga_planar_memory_active_video),
         .vga_mode13_pixel_toggle_out(vga_mode13_pixel_toggle_out),
         .crt_h_offset               (crt_h_offset),
         .crt_v_offset               (crt_v_offset),
@@ -1320,7 +1332,7 @@ end
         .clock                      (clock),
         .reset                      (reset),
         .clk_video                  (clk_video),
-        .active                     (vga_mode13_active_sys),
+        .active                     (vga_mode13_active_sys & ~vga_planar_memory_active_sys),
         .address                    (address),
         .cpu_din                    (internal_data_bus),
         .iorq                       (iorq),

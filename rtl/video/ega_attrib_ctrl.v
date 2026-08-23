@@ -26,6 +26,7 @@ module ega_attrib_ctrl (
     output wire        mono_attributes_out,
     output wire        line_graphics_enable_out,
     output wire [3:0]  pixel_pan_out,
+    output wire        split_panning_suppress_out,
     output reg  [5:0]  color_out,
     output reg         display_enable_out,
     output reg         video_enable_out
@@ -79,6 +80,9 @@ module ega_attrib_ctrl (
     assign line_graphics_enable_out = attr_line_graphics_enable;
     // Horizontal Pel Panning (index 13h), for the renderer to act on.
     assign pixel_pan_out = pixel_panning_reg[3:0];
+    // Attribute Mode Control bit 5 makes the lower half of a Line Compare
+    // split start aligned, instead of inheriting the upper half's pel pan.
+    assign split_panning_suppress_out = mode_control_reg[5];
 
     integer palette_index;
 

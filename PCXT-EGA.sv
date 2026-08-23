@@ -225,9 +225,9 @@ module emu
 	`include "build_id.v"
 
     localparam CONF_STR_ROM = "P1FC0,ROM,PCXT BIOS:;";
-    localparam CONF_STR_CMS = (`ENABLE_CMS ? "P2OA,C/MS Audio,Enabled,Disabled;" : "");
+    localparam CONF_STR_CMS = (`ENABLE_CMS ? "P2OT,C/MS Audio,Enabled,Disabled;" : "");
     localparam CONF_STR_OPL2 = (`ENABLE_OPL2 ? "P2oAB,OPL2,Adlib 388h,SB FM 388h/228h, Disabled;" : "");
-    localparam CONF_STR_EMS = (`ENABLE_EMS ? "P3OB,2MB EMS D000-DFFF,Enabled,Disabled;P3-;" : "");
+    localparam CONF_STR_EMS = (`ENABLE_EMS ? "P3O5,2MB EMS D000-DFFF,Enabled,Disabled;P3-;" : "");
     localparam CONF_STR_UMB = (`ENABLE_UMB ? "P3OC,UMB C400-CFFF,Enabled,Disabled;P3-;" : "");
     localparam CONF_STR_MIDI = (`ENABLE_MIDI ? "P3O6,USER I/O,MIDI,COM2;P3-;h3P4,MT32-pi;h3P4-;h3P4OD,Use MT32-pi,Yes,No;h3P4-;h3P4o9,MT32-pi Mode,MT-32,General MIDI;h3P4O34,MT32-pi ROM,MT-32 v1,MT-32 v2,CM-32L,Reserved;h3P4oSU,MT32-pi SoundFont,#0,#1,#2,#3,#4,#5,#6,#7;h3P4-;h3P4r8,Reset Hanging Notes;h3P4-;" : "");
 
@@ -293,7 +293,7 @@ module emu
 		"P2O12,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%;",
 		"P2O89,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 		"P2OEG,Display,Full Color,Green,Amber,B&W,Red,Blue,Fuchsia,Purple;",
-		"P2OT,VGA Mode 13h,Off,On;",
+		"P2OAB,VGA 13h+,Off,Native,60Hz;",
 		"P2o23,350-line CRT,Native,480i 15 kHz,240p 15 kHz;",
 		"P2-;",
 		"P3,Hardware;",
@@ -327,7 +327,11 @@ module emu
     wire [9:0]  ega_active_lines;
     wire [1:0] buttons;
     wire [63:0] status;
-    wire vga_mode13_osd = status[29];
+    // Native restores the original 31.4 kHz / 70 Hz Mode 13h raster. 60Hz is
+    // the CRT-TV-compatible 15.7 kHz timing previously exposed as "On".
+    wire [1:0] vga_mode13_profile_osd = status[11:10];
+    wire       vga_mode13_osd = |vga_mode13_profile_osd;
+    wire       vga_mode13_native_osd = (vga_mode13_profile_osd == 2'b01);
     // Status bit 63 is the pending CPU selection. The value presented to the
     // BIU is latched only during reset; changing the menu alone cannot change
     // queue depth or bus width while an instruction is in flight.
@@ -382,10 +386,10 @@ module emu
     reg [1:0]   scale_video_ff;
     reg [2:0]   screen_mode_video_ff;
     wire        video_scandoubler_en = (scale_video_ff > 0) || forced_scandoubler;
-    // bit0=status[5], bits2:1 retain EGA's existing mask; bit3 exposes MT32-pi;
+    // bits 2:0 have no h0/h1/h2 entries in CONF_STR; bit3 exposes MT32-pi;
     // bits 5:4 reveal the two "halted, no BIOS" lines at the top of the menu.
-    wire [15:0] status_menumask = {9'd0, bios_missing_ega, bios_missing_pcxt,
-                                   (`ENABLE_MIDI & mt32_available), 2'b11, status[5]};
+    wire [15:0] status_menumask = {10'd0, bios_missing_ega, bios_missing_pcxt,
+                                   (`ENABLE_MIDI & mt32_available), 3'b111};
 
     wire VGA_VBlank_border;
     wire std_hsyncwidth;
@@ -1138,7 +1142,7 @@ module emu
     assign  port_c_in[3:0] = port_b_out[3] ? sw[7:4] : sw[3:0];
 
 
-    wire ems_enabled_sel = `ENABLE_EMS ? ~status[11] : 1'b0;
+    wire ems_enabled_sel = `ENABLE_EMS ? ~status[5] : 1'b0;
     wire [1:0] ems_address_sel = 2'b01; // Fixed D000 page frame avoids EGA and XT-IDE ROM conflicts.
     wire umb_enabled_sel = `ENABLE_UMB ? ~status[12] : 1'b0;
 
@@ -1181,6 +1185,7 @@ module emu
 		.VGA_VBlank                         (VBlank),
 		.VGA_VBlank_border                  (VGA_VBlank_border),
 		.vga_mode13_osd                    (vga_mode13_osd),
+		.vga_mode13_native                 (vga_mode13_native_osd),
 		.ega_monitor_profile               (ega_monitor_profile_applied),
 		.vga_mode13_active_out             (vga_mode13_active_video),
 		.vga_mode13_pixel_toggle_out        (vga_mode13_pixel_toggle),
@@ -1236,7 +1241,7 @@ module emu
 		.joya1                              (status[28] ? joya0 : joya1),
 		.jtopl2_snd_e                       (jtopl2_snd_e),
 		.opl2_io                            (xtctl[4] ? 2'b10 : status[43:42]),
-		.cms_en                             (~status[10]),
+		.cms_en                             (~status[29]),
 		.o_cms_l                            (cms_l_snd_e),
 		.o_cms_r                            (cms_r_snd_e),
 		.clk_uart                           (clk_uart2_en),

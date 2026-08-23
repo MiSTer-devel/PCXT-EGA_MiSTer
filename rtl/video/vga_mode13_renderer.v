@@ -8,6 +8,7 @@ module vga_mode13_renderer(
     input  wire        clock,
     input  wire        reset,
     input  wire        enable,
+    input  wire        native_70hz,
     input  wire [3:0]  crt_h_offset,
     input  wire [2:0]  crt_v_offset,
 
@@ -47,6 +48,8 @@ module vga_mode13_renderer(
         .clock          (clock),
         .reset          (reset),
         .enable         (enable),
+        .native_70hz    (native_70hz),
+        .mode_x_profile (2'd0),
         .crt_h_offset   (crt_h_offset),
         .crt_v_offset   (crt_v_offset),
         .pixel_x        (pixel_x),

@@ -19,7 +19,7 @@ The video path is a full EGA implementation. Earlier releases used the
 [Graphics Gremlin](https://github.com/schlae/graphics-gremlin) CGA and Hercules
 adapters from TubeTimeUS ([@schlae](https://github.com/schlae)); those have been
 replaced, and CGA-compatible software now runs through the EGA path the way it
-does on real EGA hardware. The EGA and VGA mode 13h behaviour is modelled on the
+does on real EGA hardware. The EGA and VGA 13h+ behaviour is modelled on the
 video emulation in [86Box](https://github.com/86box/86box).
 
 [JTOPL](https://github.com/jotego/jtopl) by Jose Tejada
@@ -42,7 +42,10 @@ For an architectural overview and possible future improvements, see the
 * Dual EGA dot clock, 14.318181 MHz and 16.257 MHz, selected per mode as on real hardware
 * CGA-compatible text and graphics behaviour, provided by the EGA rather than a separate adapter
 * **Direct 15 kHz CRT output**, with the 350-line modes convertible to 480i or 240p from the OSD
-* **Optional VGA mode 13h** (320×200×256) with a 256-entry DAC, off by default and switched from the OSD
+* **Optional VGA 13h+**: packed 320×200×256 mode 13h, selected unchained
+  256-colour profiles (320×200, 360×200 and 320×240), and a bounded planar
+  320×200×16 mode 0Dh profile, with a 256-entry DAC; off by default and
+  switched from the OSD
 * 640 KiB conventional memory plus an optional 48 KiB UMB at C400h-CFFFh
 * EGA BIOS option ROM support (required — the card is initialised by its own ROM, as on real hardware)
 * Optional EMS memory up to 2 MiB, with a fixed D000h-DFFFh page frame
@@ -61,7 +64,7 @@ been loaded.
 | Address range | Size | Core assignment | DOS availability |
 | --- | ---: | --- | --- |
 | `00000h–9FFFFh` | 640 KiB | Conventional SDRAM | Conventional memory |
-| `A0000h–AFFFFh` | 64 KiB | EGA aperture and VGA mode 13h framebuffer | Reserved for video |
+| `A0000h–AFFFFh` | 64 KiB | EGA aperture and VGA 13h+ framebuffer | Reserved for video |
 | `B0000h–B7FFFh` | 32 KiB | Selectable EGA monochrome aperture | Reserved for video |
 | `B8000h–BFFFFh` | 32 KiB | Selectable EGA colour/text aperture | Reserved for video |
 | `C0000h–C3FFFh` | 16 KiB | EGA option ROM | Reserved for EGA BIOS |
@@ -76,8 +79,9 @@ been loaded.
 
 EGA's graphics-controller map can select `A0000h–BFFFFh`, `A0000h–AFFFFh`,
 `B0000h–B7FFFh` or `B8000h–BFFFFh`; the entire A/B area is therefore reserved
-for video regardless of the active EGA map. VGA mode 13h owns `A0000h–AFFFFh`
-while active.
+for video regardless of the active EGA map. VGA 13h+ owns `A0000h–AFFFFh`
+while active: packed mode 13h uses its private packed framebuffer, while its
+supported unchained profiles use the existing four EGA planes.
 
 The *Hardware → UMB C400-CFFF* OSD option controls only the 48 KiB C400h UMB
 block. The supplied `hdd/CONFIG.SYS` registers `C400h–CFFFh` with
@@ -122,7 +126,8 @@ the BIOS starts after it.
 The core drives a 15 kHz CRT directly, with no scaler in between. The
 scandoubler is permanently off, so the 200-line EGA and CGA-compatible modes
 reach the display undoubled at 15.7 kHz, the way the original hardware drove
-one, and VGA mode 13h is retimed onto that same 200-line raster.
+one. VGA 13h+ with its `60Hz` setting is retimed onto that same raster; its
+`Native` setting retains the original 31.4 kHz / 70 Hz VGA timing.
 
 `forced_scandoubler=1` therefore does nothing here, in any mode. It is not
 being ignored by mistake: doubling the 200-line modes would put them at about
@@ -156,11 +161,12 @@ put them.
 
 ### 31 kHz monitors
 
-There is no native 31 kHz output. Every raster the core generates itself is a
-15 kHz one — the 200-line modes, mode 13h, and both 350-line conversions above —
-and the 350-line and MDA modes left on `Native` run at 18.4 to 21.8 kHz on the
-16.257 MHz dot clock, below what a VGA monitor will accept. A multisync CRT or a
-flat panel on the analogue port is served by the scaler, in `MiSTer.ini`:
+There is no native 31 kHz output for EGA, CGA or MDA modes. Their 200-line
+rasters are 15 kHz and the 350-line/MDA modes left on `Native` run at 18.4 to
+21.8 kHz on the 16.257 MHz dot clock, below what a VGA monitor will accept.
+The exception is VGA 13h+ in its `Native` profile, which uses the original
+31.4 kHz / 70 Hz VGA raster. A multisync CRT or a flat panel on the analogue
+port is otherwise served by the scaler, in `MiSTer.ini`:
 
 * `vga_scaler=1` — routes the scaler to the analogue output. The core's own
   15 kHz rasters are not used in this configuration.
@@ -177,15 +183,27 @@ Leave *350-line CRT* on `Native` here. The 480i and 240p conversions exist to
 reach a television and have nothing to offer a monitor that can already show
 350 lines progressively.
 
-### VGA mode 13h
+### VGA 13h+
 
-The *Audio & Video → VGA Mode 13h* option adds a 256-colour packed framebuffer
-at `A000h` and a 256-entry DAC on ports `3C7h`–`3C9h`. It is **off by default**,
-and while it is off those ports do not decode at all — a real IBM EGA has no DAC,
-its palette lives in the attribute controller, so with the option off the card
-answers exactly as an EGA should.
+The *Audio & Video → VGA 13h+* option is a deliberately bounded VGA extension.
+It adds a 256-entry DAC on ports `3C7h`–`3C9h`, the original packed
+320×200×256 mode 13h at `A000h`, selected unchained four-plane profiles and a
+fixed VGA planar 16-colour profile:
 
-With the option on, the DAC feeds **every** video mode, not only mode 13h. This
+| Profile | Layout | Supported output sizes |
+| --- | --- | --- |
+| VGA mode 0Dh | Four one-bit colour planes | 320×200×16 |
+| Mode 13h | Packed 320×200×256 | 320×200 |
+| Unchained 320×200 | Four pixels per byte across four planes | 320×200 |
+| Unchained 360×200 | Four pixels per byte across four planes | 360×200 |
+| Unchained 320×240 | Four pixels per byte across four planes | 320×240 |
+
+`Off` is the default and leaves the DAC ports undecoded, exactly as on an IBM
+EGA. `Native` selects the original VGA 31.4 kHz / 70 Hz raster. `60Hz` keeps a
+15.70 kHz / 59.9 Hz television-compatible raster without an additional PLL;
+360×200 borrows horizontal blanking and 320×240 borrows vertical blanking.
+
+With the option on, the DAC feeds **every** video mode, not only VGA 13h+. This
 matters for software that detects a VGA, switches to a 16-colour mode for
 gameplay and then sets its colours through the DAC: Titus the Fox and
 Prehistorik 2 both do this, and without it they render in the stock EGA palette.
@@ -197,8 +215,34 @@ subfunctions — `INT 10h AH=10h` with `AL=10h/12h/15h/17h` are VGA additions an
 an EGA BIOS drops them silently — so the TSR hooks `INT 10h` and serves them,
 along with the queries a game uses to detect a VGA in the first place. It
 refuses to install when the OSD option is off, since claiming "VGA present" on a
-machine that will never render mode 13h just sends games down a path that leaves
+machine that will never render VGA 13h+ just sends games down a path that leaves
 the screen black.
+
+For VGA mode 0Dh, VGATSR first lets the existing EGA BIOS establish the normal
+planar registers and BIOS state, then switches only the display fetch to the
+fixed VGA raster. That renderer honours CRTC Start Address, Offset 20–23
+(40–46 bytes per plane row) and horizontal pel panning, covering common
+320×200 hardware scrolling without replacing the EGA implementation or adding
+a programmable VGA CRTC. See
+[the planar mode 0Dh scope](docs/vga-planar16-mode0d.md).
+
+When it sets mode 13h, VGATSR also installs the IBM VGA CRTC baseline that
+unchained software normally modifies. Within the profiles listed above, the
+renderer honours CRTC Offset values 40–45 (80–90 bytes per plane row), CRTC
+Start Address, Attribute Controller horizontal pel panning, one CRTC Line
+Compare split with pel-panning suppression, and Maximum Scan Line values 0–7.
+That covers hardware scrolling, page flipping, a virtual 336-pixel-wide map
+and the simple status/window split used by software such as Cute Demo. CRTC
+registers 00h–09h are readable as on VGA, so the read/modify/write updates of
+R07 and R09 used by that software preserve the vertical timing and scanline
+repeat bits. On exit, VGATSR restores the pre-VGA CRTC/attribute state before
+chaining the requested EGA BIOS mode.
+
+The core still recognises only the listed timing signatures after Chain-4 is
+disabled; it is not a generic Mode X or full VGA CRTC implementation. Other
+unchained resolutions, arbitrary timing generation, multiple splits, vertical
+panning, VGA text/high-resolution modes and cycle-exact raster effects remain
+outside this feature.
 
 #### Should it stay off for EGA-only sessions?
 
@@ -234,7 +278,7 @@ example, or running EGA-only software with nothing else in the picture.
 * System/ROM set to PC/XT
 * EGA video active at boot
 * CGA-compatible text and graphics behaviour through EGA
-* Optional VGA mode 13h, enabled only from the OSD
+* Optional VGA 13h+, enabled only from the OSD
 * OPL2 enabled for common DOS FM audio
 * CMS enabled
 * EMS enabled for expanded memory
@@ -399,9 +443,9 @@ only pre-formatted images, as it will not be possible to format them from MS-DOS
 
 ## Repository layout
 
-* `rtl/video/` — the EGA core, the VGA mode 13h blocks and their testbenches
+* `rtl/video/` — the EGA core, the VGA 13h+ blocks and their testbenches
 * `rtl/KFPC-XT/` — chipset, peripherals, RAM and the SDRAM controller
-* `SW/vga/` — `vgatsr.asm` and the assembled `vgatsr.com`
+* `SW/vga/` — `vgatsr.asm`/`vgatsr.com`, the VGA 13h+ TSR
 * `SW/ROMs/` — scripts for preparing system ROMs
 * `SW/8088_bios/` — Micro8088 BIOS sources and binaries
 * `docs/` — open issues, and the root-cause analysis of the Max CPU speed setting

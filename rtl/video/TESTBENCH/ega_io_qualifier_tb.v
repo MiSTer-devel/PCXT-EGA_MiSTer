@@ -80,6 +80,17 @@ module ega_io_qualifier_tb;
     wire [7:0] bus_out;
     wire       bus_dir;
     wire       vga_mode13_active_out;
+    wire       vga_planar_memory_active_out;
+    wire       video_de;
+    wire [5:0] video_red;
+    wire [5:0] video_green;
+    wire [5:0] video_blue;
+
+    reg [7:0] planar_plane0 = 8'h00;
+    reg [7:0] planar_plane1 = 8'h00;
+    reg [7:0] planar_plane2 = 8'h00;
+    reg [7:0] planar_plane3 = 8'h00;
+    reg       planar_data_valid = 1'b0;
 
     integer pass_count = 0;
     integer fail_count = 0;
@@ -157,11 +168,11 @@ module ega_io_qualifier_tb;
         .bus_out                   (bus_out),
         .bus_dir                   (bus_dir),
         .bus_aen                   (s2_aen),
-        .ega_plane0_data           (8'h00),
-        .ega_plane1_data           (8'h00),
-        .ega_plane2_data           (8'h00),
-        .ega_plane3_data           (8'h00),
-        .ega_fetch_data_valid      (1'b0),
+        .ega_plane0_data           (planar_plane0),
+        .ega_plane1_data           (planar_plane1),
+        .ega_plane2_data           (planar_plane2),
+        .ega_plane3_data           (planar_plane3),
+        .ega_fetch_data_valid      (planar_data_valid),
         .ega_text_char             (8'h00),
         .ega_text_attr             (8'h00),
         .ega_text_glyph            (8'h00),
@@ -176,9 +187,15 @@ module ega_io_qualifier_tb;
         .ega_enabled               (1'b1),
         .ega_monitor_profile       (2'b00),
         .vga_enabled               (1'b1),
+        .vga_mode13_native         (1'b0),
         .vga_mode13_set            (1'b0),
         .vga_mode13_clear          (1'b0),
         .vga_mode13_active_out     (vga_mode13_active_out),
+        .vga_planar_memory_active_out(vga_planar_memory_active_out),
+        .de_o                      (video_de),
+        .ega_red                  (video_red),
+        .ega_green                (video_green),
+        .ega_blue                 (video_blue),
         .crt_h_offset              (4'd0),
         .crt_v_offset              (3'd0),
         .vsync_width_osd           (3'd0),
@@ -337,6 +354,90 @@ module ega_io_qualifier_tb;
         end
     endtask
 
+    // Little Game Engine's first LOADING/CARGANDO box exposes an important
+    // distinction between storing a palette in system RAM and actually
+    // programming the VGA DAC. Its mode-X startup clears the hardware DAC,
+    // LT_Load_Font only fills LT_tileset_palette[252..255] in RAM, and the
+    // first DAC upload does not happen until LT_Fade_in, after the logo has
+    // finished loading and the display page has changed. Keep the core side
+    // of that sequence explicit: a cleared high palette entry must stay black
+    // until software writes it, and the later write must land normally.
+    task automatic run_ltdemo_loading_palette_test;
+        reg [7:0] r, g, b, status_probe;
+        integer timeout;
+        begin
+            io_write(15'h03CD, 8'h13);
+
+            // Representative of VGA_ClearPalette for the font's first DAC
+            // entry. The real routine repeats this for all 256 entries.
+            dac_write_entry(8'hFC, 8'h00, 8'h00, 8'h00);
+
+            // LT_Load_Font performs no OUT to 3C8h/3C9h. Reading the entry at
+            // the point where the loading box is drawn must therefore still
+            // return black.
+            io_write(15'h03C7, 8'hFC);
+            io_read(15'h03C9, r);
+            io_read(15'h03C9, g);
+            io_read(15'h03C9, b);
+            check8("LT demo font entry red before first fade",   r, 8'h00);
+            check8("LT demo font entry green before first fade", g, 8'h00);
+            check8("LT demo font entry blue before first fade",  b, 8'h00);
+
+            // LT_Fade_in eventually uploads LT_tileset_palette. Confirm that
+            // the same entry becomes visible once software really writes it.
+            dac_write_entry(8'hFC, 8'h3F, 8'h2A, 8'h15);
+            io_write(15'h03C7, 8'hFC);
+            io_read(15'h03C9, r);
+            io_read(15'h03C9, g);
+            io_read(15'h03C9, b);
+            check8("LT demo font entry red after first fade",   r, 8'h3F);
+            check8("LT demo font entry green after first fade", g, 8'h2A);
+            check8("LT demo font entry blue after first fade",  b, 8'h15);
+
+            // Entering planar 0Dh invalidates the mode-13h DAC defaults. That
+            // path consequently falls back to the normal EGA palette and is
+            // not affected by the high-index mode-X font-palette problem.
+            io_write(15'h03CD, 8'h0D);
+            check1("LT demo mode0D invalidates DAC entry FC",
+                   dut.vga_dac_io_inst.dac.entry_valid[8'hFC], 1'b0);
+
+            // The EGA BIOS terminates a mode set by restoring Palette Address
+            // Source. Reproduce that final write; an earlier transient test
+            // deliberately left PAS cleared.
+            io_read(15'h03DA, status_probe);
+            io_write(15'h03C0, 8'h20);
+
+            // Unlike mode X, the 16-colour route uses the ordinary attribute
+            // palette. Feed a white planar pixel and prove that the private
+            // 0Dh raster can display it immediately, before any VGA DAC fade.
+            planar_plane0 = 8'hFF;
+            planar_plane1 = 8'hFF;
+            planar_plane2 = 8'hFF;
+            planar_plane3 = 8'hFF;
+            planar_data_valid = 1'b1;
+            timeout = 0;
+            while ((video_de !== 1'b1) && timeout < 1000000) begin
+                clks(1);
+                timeout = timeout + 1;
+            end
+            check1("LT demo mode0D reaches active video before a DAC fade",
+                   video_de, 1'b1);
+            if (video_de) begin
+                // Attribute lookup and RGB conversion trail the renderer's
+                // first DE edge by a couple of video clocks.
+                clks(4);
+                check8("LT demo mode0D initial white red",
+                       {2'b00, video_red}, 8'h3F);
+                check8("LT demo mode0D initial white green",
+                       {2'b00, video_green}, 8'h3F);
+                check8("LT demo mode0D initial white blue",
+                       {2'b00, video_blue}, 8'h3F);
+            end
+            planar_data_valid = 1'b0;
+            io_write(15'h03CD, 8'h00);
+        end
+    endtask
+
     task automatic run_transient_tests;
         reg [7:0] misc_before;
         begin
@@ -366,8 +467,15 @@ module ega_io_qualifier_tb;
             io_write(15'h03CD, 8'h13);
             check1("mode13 enters on a genuine 3CD write",
                    vga_mode13_active_out, 1'b1);
+            check1("packed mode13 uses packed framebuffer memory",
+                   vga_planar_memory_active_out, 1'b0);
+            io_write(15'h03CD, 8'h0D);
+            check1("VGA planar mode0D owns the private raster",
+                   vga_mode13_active_out, 1'b1);
+            check1("VGA planar mode0D keeps planar VRAM active",
+                   vga_planar_memory_active_out, 1'b1);
             io_write(15'h03CD, 8'h00);
-            check1("mode13 leaves on a genuine 3CD clear",
+            check1("private VGA raster leaves on a genuine 3CD clear",
                    vga_mode13_active_out, 1'b0);
         end
     endtask
@@ -493,6 +601,13 @@ module ega_io_qualifier_tb;
         $display("");
         $display("-- palette block write burst, the shape of a Titus fade --");
         run_write_burst_sweep();
+
+        $display("");
+        $display("-- Little Game Engine initial loading palette sequence --");
+        strobe_clks = PIPE_CLKS + CYCLE_CLKS;
+        gap_clks = PIPE_CLKS + 2;
+        loop_enable = 1'b0;
+        run_ltdemo_loading_palette_test();
 
         $display("");
         $display("%0d passed, %0d failed", pass_count, fail_count);

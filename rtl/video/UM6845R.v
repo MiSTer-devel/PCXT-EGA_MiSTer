@@ -74,6 +74,10 @@ module UM6845R
 	output     [7:0] crtc_r17_debug,
 	output     [7:0] crtc_r15_debug,
 	output     [7:0] crtc_r16_debug,
+	output     [7:0] crtc_r19_debug,
+	// Raw Line Compare value, including the two overflow bits. The renderer
+	// applies VGA's "restart on the following physical scanline" rule.
+	output     [9:0] crtc_line_compare_debug,
 
 	input      [3:0] crt_h_offset,
 	input      [2:0] crt_v_offset,
@@ -140,6 +144,8 @@ assign crtc_r14_debug = R20_underline_loc_e;
 assign crtc_r17_debug = R23_mode_control_e;
 assign crtc_r15_debug = R21_v_blank_start_e;
 assign crtc_r16_debug = R22_v_blank_end_e;
+assign crtc_r19_debug = R19_offset_e;
+assign crtc_line_compare_debug = {R9_v_max_line[6], R7_v_sync_pos[4], R24_line_compare_e};
 
 assign DE = de[R8_skew & ~{2{CRTC_TYPE}}];
 assign VDE = vde & vde_r;
@@ -164,6 +170,10 @@ reg [7:0] R6_v_displayed = V_DISP;
 reg [7:0] R7_v_sync_pos = V_SYNCPOS;
 reg [1:0] R8_skew;
 reg [1:0] R8_interlace = 2'd2;
+// EGA index 08h is Preset Row Scan, not the MC6845 interlace/skew register.
+// Its low five bits seed the character scanline counter at frame start and
+// provide the fine vertical half of smooth text scrolling.
+reg [4:0] R8_preset_row_scan_e = 5'd0;
 reg [7:0] R9_v_max_line = {3'b000, V_MAXSCAN};
 reg [1:0] R10_cursor_mode = 2'd0;
 reg [4:0] R10_cursor_start = C_START;
@@ -254,6 +264,16 @@ always @(*) begin
 	if (ENABLE & ~nCS) begin
 		if (RS) begin
 			case (addr)
+				00: DO = ega_crtc_semantics ? R0_h_total : 8'h00;
+				01: DO = ega_crtc_semantics ? R1_h_displayed : 8'h00;
+				02: DO = ega_crtc_semantics ? R2_h_sync_pos : 8'h00;
+				03: DO = ega_crtc_semantics ? {R3_v_sync_width, R3_h_sync_width} : 8'h00;
+				04: DO = ega_crtc_semantics ? R4_h_retrace_start_e : 8'h00;
+				05: DO = ega_crtc_semantics ? {3'b000, R5_h_retrace_end_e} : 8'h00;
+				06: DO = ega_crtc_semantics ? R6_v_displayed : 8'h00;
+				07: DO = ega_crtc_semantics ? R7_v_sync_pos : 8'h00;
+				08: DO = ega_crtc_semantics ? {3'b000, R8_preset_row_scan_e} : 8'h00;
+				09: DO = ega_crtc_semantics ? R9_v_max_line : 8'h00;
 				10: DO = {R10_cursor_mode, R10_cursor_start};
 				11: DO = R11_cursor_end;
 				12: DO = R12_start_addr_h;
@@ -295,6 +315,7 @@ always @(posedge CLOCK) begin
 		R7_v_sync_pos <= V_SYNCPOS;
 		R8_skew <= 2'd0;
 		R8_interlace <= 2'd2;
+		R8_preset_row_scan_e <= 5'd0;
 		R9_v_max_line <= {3'b000, V_MAXSCAN};
 		R10_cursor_mode <= 2'd0;
 		R10_cursor_start <= C_START;
@@ -333,7 +354,10 @@ always @(posedge CLOCK) begin
 				07: R7_v_sync_pos <= ega_crtc_write_protect
 					? {R7_v_sync_pos[7:5], DI[4], R7_v_sync_pos[3:0]}
 					: DI; //R7_v_overflow <= DI;
-				08: {R8_skew, R8_interlace} <= {DI[5:4],DI[1:0]};
+				08: begin
+					if(ega_crtc_semantics) R8_preset_row_scan_e <= DI[4:0];
+					else {R8_skew, R8_interlace} <= {DI[5:4],DI[1:0]};
+				end
 				09: R9_v_max_line <= DI;
 				10: {R10_cursor_mode,R10_cursor_start} <= DI[6:0];
 				11: R11_cursor_end <= DI[4:0];
@@ -402,7 +426,16 @@ wire       frame_new = row_new & row_frame_last;
 // character row. That is what keeps a status area pinned to the bottom of the
 // screen while everything above it scrolls.
 wire [9:0] eff_line_compare = {R9_v_max_line[6], R7_v_sync_pos[4], R24_line_compare_e} + 10'd1;
-wire       line_compare_hit = ega_crtc_semantics & row_new & (row_next == eff_line_compare);
+// Cute Demo restores mode 03h and then writes Line Compare zero. Restarting
+// address zero on every text row in that exact cleanup state leaves the
+// display stuck on its first row. Do not disable text splits generally:
+// EGAUTIL uses a non-zero top-page address in modes 03h and 01h and expects
+// the lower part of the screen to restart at address zero.
+wire       text_zero_page_line0_cleanup = ~R23_mode_control_e[6] &
+                                           ({R12_start_addr_h, R13_start_addr_l} == 16'h0000) &
+                                           (eff_line_compare == 10'd1);
+wire       line_compare_hit = ega_crtc_semantics & ~text_zero_page_line0_cleanup &
+                              row_new & (row_next == eff_line_compare);
 
 // x86Box remaps interleaved byte addresses; this core fetches independent
 // planes, so convert row_addr_r to byte space and return out_addr[17:2].
@@ -459,7 +492,10 @@ always @(posedge CLOCK) begin
 			else if(frame_new) begin
 				in_adj <= 0;
 				row <= 0;
-				if(ega_crtc_semantics) line <= 5'd0;
+				// 86Box loads scanline from CRTC[08h] at vertical total.  Doing
+				// the same here makes the first character row partial; once it
+				// reaches Maximum Scan Line, normal Offset stepping resumes.
+				if(ega_crtc_semantics) line <= R8_preset_row_scan_e;
 				field <= ~field & R8_interlace[0];
 			end
 			// The split restarts the character row as well as the address, so
@@ -484,7 +520,12 @@ reg  [13:0] cursor_addr_frame;
 wire [13:0] crtc_reg_cursor_addr = {R14_cursor_h, R15_cursor_l};
 wire [15:0] ega_row_advance = R9_v_max_line[7] ? {6'd0, R19_offset_e, 2'b00} :
                                                    {7'd0, R19_offset_e, 1'b0};
-wire        ega_ma_mode = ega_crtc_semantics && |R19_offset_e;
+// Offset zero is a valid EGA value, not a request to fall back to the legacy
+// MC6845 address accumulator. It repeats the same source row because the row
+// advance is zero. EGAUTIL's Offset test changes R19 between zero and 20 once
+// per scanline; changing the whole address algorithm with it turns the image
+// into a diagonal smear instead of stretching the selected rows.
+wire        ega_ma_mode = ega_crtc_semantics;
 // 86Box samples the start address where it raises the retrace status bit, in
 // ega_poll under "vc == vsyncstart":
 //
