@@ -37,6 +37,9 @@
 `ifndef ENABLE_TANDY_AUDIO
 `define ENABLE_TANDY_AUDIO 0
 `endif
+`ifndef ENABLE_SB
+`define ENABLE_SB 0
+`endif
 
 module emu
     (
@@ -71,12 +74,39 @@ module emu
     // 0         1         2         3          4         5         6
     // 01234567890123456789012345678901 23456789012345678901234567890123
     // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
-    // XXXXX XXXXXXXXXXXXXXXXXXXXXXXXXX XXXXXXXX
+    // XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXXXXXXXXX.....XXXX
+    //
+    // Bits 55-59 are the only ones left, and they exist because the VSync
+    // and HSync width options gave up six between them: those are left on
+    // Auto in practice, and a program that needs otherwise now sets them
+    // through XTEGACTL 8988h instead. Bit 54 of that six went to Swap
+    // Joysticks, which had lent bit 28 to the 220h audio selector.
+    //
+    // Spend the rest carefully. Anything already reachable through XTEGACTL
+    // is a candidate to give its bit back the same way - Sync Joy to CPU
+    // Speed, Fake 286 FLAGS and MT32-pi Mode are each one more bit, and the
+    // CRT H and V offsets another seven, all without losing the setting.
 
 	`include "build_id.v"
 
     localparam CONF_STR_ROM = "P1FC0,ROM,PCXT BIOS:;";
-    localparam CONF_STR_CMS = (`ENABLE_CMS ? "P2OT,C/MS Audio,Enabled,Disabled;" : "");
+    // The Sound Blaster and the C/MS both live at 220h and collide on
+    // 226h/227h, where one puts its DSP reset and the other its detection
+    // register, so at most one of them can answer. When both are built that
+    // is one three-way choice rather than two switches that quietly override
+    // each other.
+    //
+    // It costs two status bits and there were none left - all 64 are spoken
+    // for - so bit 28 came from Swap Joysticks, which is gone from the menu
+    // entirely. That setting is not lost: XTEGACTL still carries it in
+    // reg_inp[5:4], the same way Tandy audio has always been reached. With
+    // only one of the two cards built there is nothing to choose between,
+    // so bit 29 stays the plain enable it has always been and bit 28 is
+    // simply free.
+    localparam CONF_STR_A220 =
+        (`ENABLE_CMS && `ENABLE_SB) ? "P2OST,Audio 220h,C/MS,Sound Blaster,Disabled;" :
+        (`ENABLE_SB)                ? "P2OT,Sound Blaster,Enabled,Disabled;"          :
+        (`ENABLE_CMS)               ? "P2OT,C/MS Audio,Enabled,Disabled;"             : "";
     localparam CONF_STR_OPL2 = (`ENABLE_OPL2 ? "P2oAB,OPL2,Adlib 388h,SB FM 388h/228h, Disabled;" : "");
     localparam CONF_STR_EMS = (`ENABLE_EMS ? "P3O5,2MB EMS D000-DFFF,Enabled,Disabled;P3-;" : "");
     localparam CONF_STR_UMB = (`ENABLE_UMB ? "P3OC,UMB C400-CFFF,Enabled,Disabled;P3-;" : "");
@@ -132,7 +162,7 @@ module emu
 		"P1-;",	
 		"P2,Audio & Video;",
 		"P2-;",
-		CONF_STR_CMS,
+		CONF_STR_A220,
 		CONF_STR_OPL2,
 		"P2o01,Speaker Volume,1,2,3,4;",
 		"P2o45,Audio Boost,No,2x,4x;",
@@ -140,8 +170,6 @@ module emu
 		"P2-;",
 		"P2oEH,CRT H offset,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15;",
 		"P2oIK,CRT V offset,0,1,2,3,4,5,6,7;",        
-		"P2oMO,VSync Width,Auto,1,2,3,4,5,6,7;",
-		"P2oPR,HSync Width,Auto,1,2,3,4,5,6,7;",
         "P2-;",
 		"P2O12,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%;",
 		"P2O89,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
@@ -158,7 +186,7 @@ module emu
 		"P3ONO,Joystick 1, Analog, Digital, Disabled;",
 		"P3OPQ,Joystick 2, Analog, Digital, Disabled;",
 		"P3OR,Sync Joy to CPU Speed,No,Yes;",
-		"P3OS,Swap Joysticks,No,Yes;",
+		"P3oM,Swap Joysticks,No,Yes;",
 		"P3-;",
 		CONF_STR_MIDI,
 		"-;",
@@ -205,13 +233,33 @@ module emu
     // reads zero as "leave it to the OSD", so with nothing written the machine
     // behaves exactly as the menu says.
     wire [7:0]  xtegactl_cpu, xtegactl_exp, xtegactl_vid, xtegactl_inp, xtegactl_midi, xtegactl_exp2;
+    wire [7:0]  xtegactl_crt, xtegactl_sync;
     wire [1:0]  eff_speed;
     wire        eff_fake286;
     wire [1:0]  eff_opl2;
     wire        eff_cms, eff_ems, eff_umb, eff_vga13;
+    wire        eff_sb;
+    wire [3:0]  eff_crt_h;
+    wire [2:0]  eff_crt_v;
+    wire [2:0]  eff_vsync_w, eff_hsync_w;
     wire        eff_joy1_digital, eff_joy1_disable;
     wire        eff_joy2_digital, eff_joy2_disable;
     wire        eff_joy_sync, eff_joy_swap, eff_mt32_gm, eff_tandy;
+
+    // Audio at 220h. With both cards built this is one three-way field in
+    // status[29:28]: 0 = C/MS, 1 = Sound Blaster, 2 = neither. With only one
+    // built there is nothing to choose between, so bit 29 stays the plain
+    // Enabled/Disabled it has always been and bit 28 is left to Swap
+    // Joysticks. Either way these two are never both high, which is what
+    // 226h/227h requires.
+    wire       a220_three_way = (`ENABLE_CMS && `ENABLE_SB) ? 1'b1 : 1'b0;
+    wire [1:0] a220_sel       = status[29:28];
+    wire       a220_cms       = `ENABLE_CMS
+                             ? (a220_three_way ? (a220_sel == 2'd0) : ~status[29])
+                             : 1'b0;
+    wire       a220_sb        = `ENABLE_SB
+                             ? (a220_three_way ? (a220_sel == 2'd1) : ~status[29])
+                             : 1'b0;
 
     xtegactl_resolve xtegactl_apply (
         .reg_cpu          (xtegactl_cpu),
@@ -223,7 +271,13 @@ module emu
         .osd_speed        (status[18:17]),
         .osd_fake286      (fake_286_flags_osd),
         .osd_opl2         (status[43:42]),
-        .osd_cms          (~status[29]),
+        .osd_cms          (a220_cms),
+        .osd_sb           (a220_sb),
+        .build_sb         (`ENABLE_SB ? 1'b1 : 1'b0),
+        .reg_crt          (xtegactl_crt),
+        .reg_sync         (xtegactl_sync),
+        .osd_crt_h        (status[49:46]),
+        .osd_crt_v        (status[52:50]),
         .osd_ems          (~status[5]),
         .osd_umb          (~status[12]),
         .osd_vga13        (vga_mode13_osd),
@@ -232,13 +286,14 @@ module emu
         .osd_joy2_digital (status[25]),
         .osd_joy2_disable (status[26]),
         .osd_joy_sync     (status[27]),
-        .osd_joy_swap     (status[28]),
+        .osd_joy_swap     (status[54]),
         .osd_mt32_gm      (status[41]),
         .build_tandy      (`ENABLE_TANDY_AUDIO ? 1'b1 : 1'b0),
         .eff_speed        (eff_speed),
         .eff_fake286      (eff_fake286),
         .eff_opl2         (eff_opl2),
         .eff_cms          (eff_cms),
+        .eff_sb           (eff_sb),
         .eff_ems          (eff_ems),
         .eff_umb          (eff_umb),
         .eff_vga13        (eff_vga13),
@@ -249,7 +304,11 @@ module emu
         .eff_joy_sync     (eff_joy_sync),
         .eff_joy_swap     (eff_joy_swap),
         .eff_mt32_gm      (eff_mt32_gm),
-        .eff_tandy        (eff_tandy)
+        .eff_tandy        (eff_tandy),
+        .eff_crt_h        (eff_crt_h),
+        .eff_crt_v        (eff_crt_v),
+        .eff_vsync_w      (eff_vsync_w),
+        .eff_hsync_w      (eff_hsync_w)
     );
 
     wire [7:0]  uart_mode;
@@ -287,8 +346,11 @@ module emu
     wire [1:0] scale = status[2:1];
     wire [2:0] screen_mode = status[16:14];
     wire [1:0] ar = status[9:8];
-    wire [2:0] vsync_width_osd = status[56:54];  // 0=Auto (use register), 1-7=override
-    wire [2:0] hsync_width_osd = status[59:57];  // 0=Auto, 1-7=fixed width (Nx16 pixel clocks)
+    // Sync widths have no menu entry: Auto is what they are left on, and a
+    // program that needs otherwise sets XTEGACTL 8988h. Zero is Auto and
+    // zero is the register's reset value, so the core still starts in Auto.
+    wire [2:0] vsync_width_osd = eff_vsync_w;
+    wire [2:0] hsync_width_osd = eff_hsync_w;
 
     reg [1:0]   scale_video_ff;
     reg [2:0]   screen_mode_video_ff;
@@ -1162,6 +1224,9 @@ module emu
 		.tandy_snd_e                        (tandy_snd_e),
 		.tandy_en                           (eff_tandy),
 		.opl2_io                            (eff_opl2),
+		.sb_en                              (eff_sb),
+		.sb_snd_l                           (sb_snd_l),
+		.sb_snd_r                           (sb_snd_r),
 		.cms_en                             (eff_cms),
 		.o_cms_l                            (cms_l_snd_e),
 		.o_cms_r                            (cms_r_snd_e),
@@ -1214,6 +1279,9 @@ module emu
 		.xtegactl_vid                       (xtegactl_vid),
 		.xtegactl_inp                       (xtegactl_inp),
 		.xtegactl_midi                      (xtegactl_midi),
+		.xtegactl_exp2                      (xtegactl_exp2),
+		.xtegactl_crt                       (xtegactl_crt),
+		.xtegactl_sync                      (xtegactl_sync),
 		.wait_count_clk_en                  (cpu_ce_negedge),
 		.ram_read_wait_cycle                (ram_read_wait_cycle),
 		.ram_write_wait_cycle               (ram_write_wait_cycle),
@@ -1226,8 +1294,8 @@ module emu
 		.ega_mode350                        (ega_mode350),
 		.ega_active_dots                    (ega_active_dots),
 		.ega_active_lines                   (ega_active_lines),
-		.crt_h_offset                       (status[49:46]),
-		.crt_v_offset                       (status[52:50]),
+		.crt_h_offset                       (eff_crt_h),
+		.crt_v_offset                       (eff_crt_v),
 		.vsync_width_osd                    (vsync_width_osd),
 		.hsync_width_osd                    (hsync_width_osd)
 	);
@@ -1289,6 +1357,13 @@ module emu
     wire [15:0] cms_r_snd_e;
     wire [16:0] cms_r_snd = {cms_r_snd_e[15],cms_r_snd_e};
 	 
+    // Sound Blaster Pro: DAC and FM together, after its own mixer. When the
+    // card is switched off this is the OPL2 passed through untouched, and
+    // jtopl2_snd below is zero - the FM only ever reaches the sum once.
+    wire [15:0] sb_snd_l, sb_snd_r;
+    wire [16:0] sb_l_snd = {sb_snd_l[15], sb_snd_l};
+    wire [16:0] sb_r_snd = {sb_snd_r[15], sb_snd_r};
+
     wire [15:0] jtopl2_snd_e;
     wire [16:0] jtopl2_snd = {jtopl2_snd_e[15], jtopl2_snd_e};
     // Tandy 1000 sound. Sign-extended from 11 bits and scaled the way the
@@ -1332,7 +1407,7 @@ module emu
     begin
         reg [16:0] tmp_l;
 
-        tmp_l <= jtopl2_snd + cms_l_snd + tandy_snd + spk_vol + mt32_l_snd;
+        tmp_l <= jtopl2_snd + cms_l_snd + tandy_snd + spk_vol + mt32_l_snd + sb_l_snd;
 
         // clamp the output
         out_l <= (^tmp_l[16:15]) ? {tmp_l[16], {15{tmp_l[15]}}} : tmp_l[15:0];
@@ -1346,7 +1421,7 @@ module emu
     begin
         reg [16:0] tmp_r;
 
-        tmp_r <= jtopl2_snd + cms_r_snd + tandy_snd + spk_vol + mt32_r_snd;
+        tmp_r <= jtopl2_snd + cms_r_snd + tandy_snd + spk_vol + mt32_r_snd + sb_r_snd;
 
         // clamp the output
         out_r <= (^tmp_r[16:15]) ? {tmp_r[16], {15{tmp_r[15]}}} : tmp_r[15:0];
@@ -1868,8 +1943,8 @@ module emu
         .reset(video_retime_reset),
         .enable(fb_enable),
         .progressive(crt480i_prog),
-        .crt_h_offset(status[49:46]),
-        .crt_v_offset(status[52:50]),
+        .crt_h_offset(eff_crt_h),
+        .crt_v_offset(eff_crt_v),
         .frame_buffer(fb_frame_buffer),
         .frame_width(fb_frame_width),
         .frame_height(fb_frame_height),

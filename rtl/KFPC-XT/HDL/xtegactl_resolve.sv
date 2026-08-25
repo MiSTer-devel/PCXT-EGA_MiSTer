@@ -27,6 +27,7 @@ module xtegactl_resolve (
     input  wire        osd_fake286,
     input  wire  [1:0] osd_opl2,         // 0=388h  1=388h+228h  2=off
     input  wire        osd_cms,
+    input  wire        osd_sb,
     input  wire        osd_ems,
     input  wire        osd_umb,
     input  wire        osd_vga13,
@@ -42,6 +43,11 @@ module xtegactl_resolve (
     // rather than "whatever the menu says".  The distinction only shows when
     // the chip is compiled out: the field then cannot switch on hardware that
     // is not there, which is also enforced at the chip select itself.
+    input  wire  [7:0] reg_crt,
+    input  wire  [7:0] reg_sync,
+    input  wire  [3:0] osd_crt_h,
+    input  wire  [2:0] osd_crt_v,
+    input  wire        build_sb,
     input  wire        build_tandy,
 
     // What the machine should actually run on.
@@ -49,6 +55,7 @@ module xtegactl_resolve (
     output wire        eff_fake286,
     output wire  [1:0] eff_opl2,
     output wire        eff_cms,
+    output wire        eff_sb,
     output wire        eff_ems,
     output wire        eff_umb,
     output wire        eff_vga13,
@@ -59,7 +66,11 @@ module xtegactl_resolve (
     output wire        eff_joy_sync,
     output wire        eff_joy_swap,
     output wire        eff_mt32_gm,
-    output wire        eff_tandy
+    output wire        eff_tandy,
+    output wire  [3:0] eff_crt_h,
+    output wire  [2:0] eff_crt_v,
+    output wire  [2:0] eff_vsync_w,
+    output wire  [2:0] eff_hsync_w
 );
 
     // Named so the resolution below reads as the table in the header rather
@@ -77,6 +88,22 @@ module xtegactl_resolve (
     wire [1:0] f_sync    = reg_inp[7:6];
     wire [1:0] f_mt32    = reg_midi[1:0];
     wire [1:0] f_tandy   = reg_exp2[1:0];
+    wire [1:0] f_sb      = reg_exp2[3:2];
+
+    // Screen geometry, meant to be set by a launcher just before it hands
+    // over to a game - centring the picture is per-program work, not a
+    // property of the machine.
+    //
+    // The offsets cannot use the usual "zero defers to the OSD" rule,
+    // because zero is a real offset, so they carry an explicit override
+    // bit instead. The sync widths have no menu entry left to defer to and
+    // take the register as their only source; zero is Auto there, and zero
+    // is the reset value, so an untouched core starts in Auto.
+    wire [3:0] f_crt_h   = reg_crt[3:0];
+    wire [2:0] f_crt_v   = reg_crt[6:4];
+    wire       f_crt_ovr = reg_crt[7];
+    wire [2:0] f_vsync_w = reg_sync[2:0];
+    wire [2:0] f_hsync_w = reg_sync[5:3];
 
     // Speed is the one field wider than two bits, because it picks between
     // four choices rather than three.  Values above Max are not choices, so
@@ -87,7 +114,16 @@ module xtegactl_resolve (
     // 1 selects the first menu entry, 2 the second.
     assign eff_fake286 = (f_fake286 == 2'd0) ? osd_fake286  : (f_fake286 == 2'd2);
     assign eff_opl2    = (f_opl2    == 2'd0) ? osd_opl2     : (f_opl2 - 2'd1);
-    assign eff_cms     = (f_cms     == 2'd0) ? osd_cms      : (f_cms   == 2'd1);
+    // The Sound Blaster and the C/MS share 220h and collide on 226h/227h -
+    // one puts its DSP reset there, the other its detection register - so
+    // only one of them may answer. The OSD offers them as a single
+    // three-way choice and so cannot ask for both, but the XTEGACTL fields
+    // are independent and a program can set either. The Sound Blaster wins
+    // that tie, because a program that went out of its way to ask for one
+    // is the better guess at intent than a default left enabled.
+    wire cms_selected  = (f_cms == 2'd0) ? osd_cms : (f_cms == 2'd1);
+    assign eff_sb      = build_sb & ((f_sb == 2'd0) ? osd_sb : (f_sb == 2'd1));
+    assign eff_cms     = cms_selected & ~eff_sb;
     assign eff_ems     = (f_ems     == 2'd0) ? osd_ems      : (f_ems   == 2'd1);
     assign eff_umb     = (f_umb     == 2'd0) ? osd_umb      : (f_umb   == 2'd1);
     assign eff_vga13   = (f_vga13   == 2'd0) ? osd_vga13    : (f_vga13 == 2'd2);
@@ -95,6 +131,11 @@ module xtegactl_resolve (
     assign eff_joy_sync= (f_sync    == 2'd0) ? osd_joy_sync : (f_sync  == 2'd2);
     assign eff_mt32_gm = (f_mt32    == 2'd0) ? osd_mt32_gm  : (f_mt32  == 2'd2);
     assign eff_tandy   = (f_tandy   == 2'd0) ? build_tandy  : (f_tandy == 2'd1);
+
+    assign eff_crt_h   = f_crt_ovr ? f_crt_h : osd_crt_h;
+    assign eff_crt_v   = f_crt_ovr ? f_crt_v : osd_crt_v;
+    assign eff_vsync_w = f_vsync_w;
+    assign eff_hsync_w = f_hsync_w;
 
     // Analog, Digital and Disabled are one menu option but two signals: the
     // core carries the stick type and the disable separately.

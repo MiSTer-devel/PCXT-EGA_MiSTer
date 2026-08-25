@@ -119,6 +119,9 @@ module CHIPSET #(
         input   logic           tandy_en,
         input   logic   [1:0]   opl2_io,
         // C/MS Audio
+        input   logic           sb_en,
+        output  logic   [15:0]  sb_snd_l,
+        output  logic   [15:0]  sb_snd_r,
         input   logic           cms_en,
         output  logic   [15:0]  o_cms_l,
         output  logic   [15:0]  o_cms_r,
@@ -180,6 +183,9 @@ module CHIPSET #(
         output  logic   [7:0]   xtegactl_vid,
         output  logic   [7:0]   xtegactl_inp,
         output  logic   [7:0]   xtegactl_midi,
+        output  logic   [7:0]   xtegactl_exp2,
+        output  logic   [7:0]   xtegactl_crt,
+        output  logic   [7:0]   xtegactl_sync,
         // RAM wait mode
         input   logic           wait_count_clk_en,
         input   logic   [1:0]   ram_read_wait_cycle,
@@ -233,6 +239,7 @@ module CHIPSET #(
     logic           ems_b3;
     logic           ems_b4;
     logic           fdd_dma_req;
+    logic           sb_dma_req;
 
     //
     // I/O settle guard
@@ -349,7 +356,7 @@ module CHIPSET #(
         .memory_write_n_direction           (memory_write_n_direction),
         .no_command_state                   (no_command_state),
         .ext_access_request                 (ext_access_request),
-        .dma_request                        ({dma_request[3], fdd_dma_req, dma_request[1], DRQ0}),
+        .dma_request                        ({dma_request[3], fdd_dma_req, sb_dma_req, DRQ0}),
         .dma_acknowledge_n                  (dma_acknowledge_n),
         .address_enable_n                   (address_enable_n),
         .terminal_count_n                   (terminal_count_n)
@@ -423,6 +430,11 @@ module CHIPSET #(
         .tandy_snd_rdy                      (tandy_snd_rdy),
         .tandy_en                           (tandy_en),
         .opl2_io                            (opl2_io),
+        .sb_en                              (sb_en),
+        .sb_snd_l                           (sb_snd_l),
+        .sb_snd_r                           (sb_snd_r),
+        .sb_dma_req                         (sb_dma_req),
+        .sb_dma_ack                         (~dma_acknowledge_n[1]),
         .cms_en                             (cms_en),
         .o_cms_l                            (o_cms_l),
         .o_cms_r                            (o_cms_r),
@@ -466,6 +478,9 @@ module CHIPSET #(
         .xtegactl_vid                       (xtegactl_vid),
         .xtegactl_inp                       (xtegactl_inp),
         .xtegactl_midi                      (xtegactl_midi),
+        .xtegactl_exp2                      (xtegactl_exp2),
+        .xtegactl_crt                       (xtegactl_crt),
+        .xtegactl_sync                      (xtegactl_sync),
         .pause_core                         (pause_core),
         .video_scandoubler_en                  (video_scandoubler_en),
         .ega_dot_toggle                     (ega_dot_toggle),

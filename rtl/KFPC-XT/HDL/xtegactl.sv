@@ -20,8 +20,20 @@
 //   8983h  R/W video      [1:0] VGA 13h+
 //   8984h  R/W input      [1:0] joy 1  [3:2] joy 2  [5:4] swap  [7:6] joy sync
 //   8985h  R/W MIDI       [1:0] MT32-pi mode
-//   8986h  R/W expansion 2 [1:0] Tandy sound
-//   8987h..898Fh          reserved, read as zero
+//   8986h  R/W expansion 2 [1:0] Tandy sound  [3:2] Sound Blaster
+//   8987h  R/W CRT offset [3:0] H offset  [6:4] V offset  [7] override
+//   8988h  R/W sync width [2:0] VSync  [5:3] HSync   (0 = Auto)
+//   8989h..898Fh          reserved, read as zero
+//
+// The CRT offsets keep the menu's convention of deferring to the OSD, but
+// they cannot do it the way every other field does. Elsewhere a zero field
+// means "leave it to the OSD"; here zero is a real offset, so bit 7 of
+// 8987h says whether the register is speaking at all.
+//
+// The sync widths need no such bit, because they no longer have a menu
+// entry to defer to - this register is their only source. Zero means Auto
+// there, and zero is what the register holds out of reset, so a core that
+// nobody has written to starts in Auto exactly as it always did.
 //
 // Why 8980h and not next to the old 8888h port: the motherboard chip select
 // decoder ignores address[15:10] entirely - it qualifies on ~address[9] &
@@ -60,7 +72,9 @@ module xtegactl #(
     output reg   [7:0] reg_vid  = 8'h00,
     output reg   [7:0] reg_inp  = 8'h00,
     output reg   [7:0] reg_midi = 8'h00,
-    output reg   [7:0] reg_exp2 = 8'h00
+    output reg   [7:0] reg_exp2 = 8'h00,
+    output reg   [7:0] reg_crt  = 8'h00,
+    output reg   [7:0] reg_sync = 8'h00
 );
 
     localparam [11:0] BLOCK = 12'h898;
@@ -76,6 +90,8 @@ module xtegactl #(
             reg_inp  <= 8'h00;
             reg_midi <= 8'h00;
             reg_exp2 <= 8'h00;
+            reg_crt  <= 8'h00;
+            reg_sync <= 8'h00;
         end
         else if (block_hit & ~io_write_n) begin
             case (address[3:0])
@@ -85,6 +101,8 @@ module xtegactl #(
                 4'h4: reg_inp  <= data_in;
                 4'h5: reg_midi <= data_in;
                 4'h6: reg_exp2 <= data_in;
+                4'h7: reg_crt  <= data_in;
+                4'h8: reg_sync <= data_in;
                 default: ;      // signature and the reserved ports ignore writes
             endcase
         end
@@ -100,6 +118,8 @@ module xtegactl #(
             4'h4:    read_mux = reg_inp;
             4'h5:    read_mux = reg_midi;
             4'h6:    read_mux = reg_exp2;
+            4'h7:    read_mux = reg_crt;
+            4'h8:    read_mux = reg_sync;
             default: read_mux = 8'h00;
         endcase
     end

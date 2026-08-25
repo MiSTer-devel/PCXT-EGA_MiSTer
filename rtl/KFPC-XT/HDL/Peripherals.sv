@@ -19,6 +19,9 @@
 `ifndef ENABLE_TANDY_AUDIO
 `define ENABLE_TANDY_AUDIO 0
 `endif
+`ifndef ENABLE_SB
+`define ENABLE_SB 0
+`endif
 
 module PERIPHERALS #(
         parameter ps2_over_time = 16'd1000,
@@ -97,6 +100,12 @@ module PERIPHERALS #(
         output  logic           tandy_snd_rdy,
         input   logic           tandy_en,
         input   logic   [1:0]   opl2_io,
+        // Sound Blaster Pro
+        input   logic           sb_en,
+        output  logic   [15:0]  sb_snd_l,
+        output  logic   [15:0]  sb_snd_r,
+        output  logic           sb_dma_req,
+        input   logic           sb_dma_ack,
         // C/MS Audio
         input   logic           cms_en,
         output  reg     [15:0]  o_cms_l,
@@ -148,6 +157,9 @@ module PERIPHERALS #(
         output  logic   [7:0]   xtegactl_vid,
         output  logic   [7:0]   xtegactl_inp,
         output  logic   [7:0]   xtegactl_midi,
+        output  logic   [7:0]   xtegactl_exp2,
+        output  logic   [7:0]   xtegactl_crt,
+        output  logic   [7:0]   xtegactl_sync,
         // Others
         output  logic           pause_core,
         input   logic           video_scandoubler_en,
@@ -417,7 +429,7 @@ module PERIPHERALS #(
         //.slave_program_or_enable_buffer     (),
         .interrupt_acknowledge_n    (interrupt_acknowledge_n),
         .interrupt_to_cpu           (interrupt_to_cpu_buf),
-        .interrupt_request          ({interrupt_request[7],
+        .interrupt_request          ({interrupt_request[7] | sb_interrupt,
                                         fdd_interrupt,
                                         interrupt_request[5],
                                         uart_interrupt,
@@ -631,7 +643,11 @@ module PERIPHERALS #(
     wire [7:0] jtopl2_dout_int;
     wire [15:0] jtopl2_snd_e_int;
     wire [7:0] jtopl2_dout = `ENABLE_OPL2 ? jtopl2_dout_int : 8'hFF;
-    assign jtopl2_snd_e = `ENABLE_OPL2 ? jtopl2_snd_e_int : 16'd0;
+    // The OPL2 goes out through the Sound Blaster when there is one, so that
+    // the card's mixer can set its level like a real one does. The direct
+    // path is silenced in that case - otherwise the top level would sum the
+    // same FM twice. With no card built this is exactly as it was.
+    assign jtopl2_snd_e = (`ENABLE_OPL2 && !`ENABLE_SB) ? jtopl2_snd_e_int : 16'd0;
 
     reg clk_en_opl2;
     always @(posedge clock) begin
@@ -659,6 +675,53 @@ module PERIPHERALS #(
         .snd(jtopl2_snd_e_int),
         .sample()
     );
+
+    //
+    // Sound Blaster Pro
+    //
+    // 220h, DMA channel 1, IRQ 7 - all three fixed, as they are on a card
+    // whose jumpers nobody moved. The DSP, mixer and DMA bridge all live
+    // inside soundblaster.sv; what is left out here is only the wiring.
+    //
+    // sb_en arrives already exclusive with cms_en: xtegactl_resolve drops
+    // the C/MS whenever this is set, because the two collide on 226h/227h.
+    logic           sb_read_select;
+    logic   [7:0]   sb_readdata;
+    logic           sb_interrupt;
+
+    generate
+    if (`ENABLE_SB) begin : SOUND_BLASTER
+        soundblaster u_soundblaster (
+            .clock              (clock),
+            .reset              (reset),
+            .cpu_ce_negedge     (cpu_ce_negedge),
+            .clk_rate           (clk_rate),
+            .address            (address[15:0]),
+            .internal_data_bus  (internal_data_bus),
+            .io_read_n          (io_read_n),
+            .io_write_n         (io_write_n),
+            .address_enable_n   (address_enable_n),
+            .enable             (sb_en),
+            .read_select        (sb_read_select),
+            .data_bus_out       (sb_readdata),
+            .dma_acknowledge    (sb_dma_ack),
+            .dma_request        (sb_dma_req),
+            .irq                (sb_interrupt),
+            .fm_l               (jtopl2_snd_e_int),
+            .fm_r               (jtopl2_snd_e_int),
+            .sample_l           (sb_snd_l),
+            .sample_r           (sb_snd_r)
+        );
+    end
+    else begin : NO_SOUND_BLASTER
+        assign sb_read_select = 1'b0;
+        assign sb_readdata    = 8'hFF;
+        assign sb_interrupt   = 1'b0;
+        assign sb_dma_req     = 1'b0;
+        assign sb_snd_l       = 16'd0;
+        assign sb_snd_r       = 16'd0;
+    end
+    endgenerate
 
     // Tandy 1000 sound (SN76489). It shares the OPL2's 3.579 MHz clock enable,
     // which is the part's real clock on a Tandy 1000.
@@ -1081,7 +1144,10 @@ end
         .reg_exp          (xtegactl_exp),
         .reg_vid          (xtegactl_vid),
         .reg_inp          (xtegactl_inp),
-        .reg_midi         (xtegactl_midi)
+        .reg_midi         (xtegactl_midi),
+        .reg_exp2         (xtegactl_exp2),
+        .reg_crt          (xtegactl_crt),
+        .reg_sync         (xtegactl_sync)
     );
 
     always_ff @(posedge clock)
@@ -1814,6 +1880,11 @@ end
         begin
             data_bus_out_from_chipset <= 1'b1;
             data_bus_out <= jtopl2_dout;
+        end
+        else if (`ENABLE_SB && sb_read_select && ~io_read_n)
+        begin
+            data_bus_out_from_chipset <= 1'b1;
+            data_bus_out <= sb_readdata;
         end
         else if (cms_rd && ~io_read_n)
         begin

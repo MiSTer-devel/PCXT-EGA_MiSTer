@@ -35,6 +35,9 @@ module xtegactl_tb;
     logic       osd_fake286      = 1'b1;
     logic [1:0] osd_opl2         = 2'd1;    // SB FM
     logic       osd_cms          = 1'b1;
+    logic       osd_sb           = 1'b0;
+    logic [3:0] osd_crt_h        = 4'd5;
+    logic [2:0] osd_crt_v        = 3'd3;
     logic       osd_ems          = 1'b1;
     logic       osd_umb          = 1'b1;
     logic       osd_vga13        = 1'b1;
@@ -45,17 +48,23 @@ module xtegactl_tb;
     logic       osd_joy_sync     = 1'b1;
     logic       osd_joy_swap     = 1'b1;
     logic       osd_mt32_gm      = 1'b1;
+    logic       build_sb         = 1'b1;
     logic       build_tandy      = 1'b1;
 
     wire [1:0] eff_speed;
     wire       eff_fake286;
     wire [1:0] eff_opl2;
     wire       eff_cms, eff_ems, eff_umb, eff_vga13;
+    wire       eff_sb;
+    wire [3:0] eff_crt_h;
+    wire [2:0] eff_crt_v;
+    wire [2:0] eff_vsync_w, eff_hsync_w;
     wire       eff_joy1_digital, eff_joy1_disable;
     wire       eff_joy2_digital, eff_joy2_disable;
     wire       eff_joy_sync, eff_joy_swap, eff_mt32_gm, eff_tandy;
 
     wire [7:0] reg_cpu, reg_exp, reg_vid, reg_inp, reg_midi, reg_exp2;
+    wire [7:0] reg_crt, reg_sync;
 
     xtegactl dut (
         .clock(clock), .reset(reset),
@@ -63,26 +72,32 @@ module xtegactl_tb;
         .io_read_n(io_read_n), .io_write_n(io_write_n),
         .data_in(data_in), .data_out(data_out), .output_enable(output_enable),
         .reg_cpu(reg_cpu), .reg_exp(reg_exp), .reg_vid(reg_vid),
-        .reg_inp(reg_inp), .reg_midi(reg_midi), .reg_exp2(reg_exp2)
+        .reg_inp(reg_inp), .reg_midi(reg_midi), .reg_exp2(reg_exp2),
+        .reg_crt(reg_crt), .reg_sync(reg_sync)
     );
 
     xtegactl_resolve res (
         .reg_cpu(reg_cpu), .reg_exp(reg_exp), .reg_vid(reg_vid),
         .reg_inp(reg_inp), .reg_midi(reg_midi), .reg_exp2(reg_exp2),
         .osd_speed(osd_speed), .osd_fake286(osd_fake286), .osd_opl2(osd_opl2),
-        .osd_cms(osd_cms), .osd_ems(osd_ems), .osd_umb(osd_umb),
+        .osd_cms(osd_cms), .osd_sb(osd_sb), .build_sb(build_sb),
+        .reg_crt(reg_crt), .reg_sync(reg_sync),
+        .osd_crt_h(osd_crt_h), .osd_crt_v(osd_crt_v),
+        .osd_ems(osd_ems), .osd_umb(osd_umb),
         .osd_vga13(osd_vga13),
         .osd_joy1_digital(osd_joy1_digital), .osd_joy1_disable(osd_joy1_disable),
         .osd_joy2_digital(osd_joy2_digital), .osd_joy2_disable(osd_joy2_disable),
         .osd_joy_sync(osd_joy_sync), .osd_joy_swap(osd_joy_swap),
         .osd_mt32_gm(osd_mt32_gm), .build_tandy(build_tandy),
         .eff_speed(eff_speed), .eff_fake286(eff_fake286), .eff_opl2(eff_opl2),
-        .eff_cms(eff_cms), .eff_ems(eff_ems), .eff_umb(eff_umb),
+        .eff_cms(eff_cms), .eff_sb(eff_sb), .eff_ems(eff_ems), .eff_umb(eff_umb),
         .eff_vga13(eff_vga13),
         .eff_joy1_digital(eff_joy1_digital), .eff_joy1_disable(eff_joy1_disable),
         .eff_joy2_digital(eff_joy2_digital), .eff_joy2_disable(eff_joy2_disable),
         .eff_joy_sync(eff_joy_sync), .eff_joy_swap(eff_joy_swap),
-        .eff_mt32_gm(eff_mt32_gm), .eff_tandy(eff_tandy)
+        .eff_mt32_gm(eff_mt32_gm), .eff_tandy(eff_tandy),
+        .eff_crt_h(eff_crt_h), .eff_crt_v(eff_crt_v),
+        .eff_vsync_w(eff_vsync_w), .eff_hsync_w(eff_hsync_w)
     );
 
     integer errors = 0;
@@ -134,6 +149,14 @@ module xtegactl_tb;
     endtask
 
     logic [7:0] rd;
+
+    task chk3(input string what, input logic [2:0] got, input logic [2:0] want);
+        if (got !== want) fail($sformatf("%s got=%0d expected=%0d", what, got, want));
+    endtask
+
+    task chk4(input string what, input logic [3:0] got, input logic [3:0] want);
+        if (got !== want) fail($sformatf("%s got=%0d expected=%0d", what, got, want));
+    endtask
 
     initial begin
         repeat (2) @(posedge clock);
@@ -245,6 +268,28 @@ module xtegactl_tb;
         // ---- Tandy sound, in its own register ---------------------------------------
         // Unlike every other field this one has no menu option behind it, so a
         // zero falls back to what the build says rather than to the OSD.
+        // Sound Blaster, and the rule that it and the C/MS cannot both be
+        // on: they collide on 226h/227h. The OSD offers one three-way
+        // choice so it cannot ask for both, but these two XTEGACTL fields
+        // are independent and a program can. The Sound Blaster wins.
+        io_write(16'h8986, 8'h00);
+        osd_sb = 1'b0; osd_cms = 1'b1;
+        #1; chk("sb 0 defers to the OSD",     eff_sb,  1'b0);
+        chk("cms keeps 220h with no sb",      eff_cms, 1'b1);
+        io_write(16'h8986, 8'h04); chk("sb 1 enables",  eff_sb,  1'b1);
+        chk("sb takes 220h from the cms",     eff_cms, 1'b0);
+        io_write(16'h8986, 8'h08); chk("sb 2 disables", eff_sb,  1'b0);
+        chk("cms gets 220h back",             eff_cms, 1'b1);
+        io_write(16'h8986, 8'h00);
+        osd_sb = 1'b1;
+        #1; chk("sb 0 follows the OSD",       eff_sb,  1'b1);
+        chk("osd sb also excludes the cms",   eff_cms, 1'b0);
+        build_sb = 1'b0;
+        #1; chk("no sb in the build, no sb",  eff_sb,  1'b0);
+        chk("and the cms keeps 220h",         eff_cms, 1'b1);
+        build_sb = 1'b1; osd_sb = 1'b0;
+        #1;
+
         io_write(16'h8986, 8'h01); chk("tandy 1 enables",  eff_tandy, 1'b1);
         io_write(16'h8986, 8'h02); chk("tandy 2 disables", eff_tandy, 1'b0);
         io_write(16'h8986, 8'h00); chk("tandy 0 defers to the build", eff_tandy, 1'b1);
@@ -265,10 +310,43 @@ module xtegactl_tb;
         io_read (16'h8984, rd);
         if (rd !== 8'h5A) fail($sformatf("input register read %02h expected 5A", rd));
 
+        // ---- CRT geometry ----------------------------------------------------------
+        // 8987h and 8988h used to be reserved. They now carry the screen
+        // geometry a launcher sets before handing over to a game.
+        io_write(16'h8987, 8'h00);
+        io_write(16'h8988, 8'h00);
+        #1;
+        chk4("crt h defers to the OSD", eff_crt_h, 4'd5);
+        chk3("crt v defers to the OSD", eff_crt_v, 3'd3);
+        chk3("vsync starts in Auto",    eff_vsync_w, 3'd0);
+        chk3("hsync starts in Auto",    eff_hsync_w, 3'd0);
+
+        // Bit 7 is the override. Without it a zero offset would be
+        // indistinguishable from "leave it to the OSD".
+        io_write(16'h8987, 8'h0A);
+        #1;
+        chk4("crt h ignores a register with no override", eff_crt_h, 4'd5);
+        io_write(16'h8987, 8'h8A);
+        #1;
+        chk4("crt h takes the override", eff_crt_h, 4'd10);
+        chk3("crt v takes the override", eff_crt_v, 3'd0);
+        io_write(16'h8987, 8'hF0);
+        #1;
+        chk4("crt h zero is a real offset", eff_crt_h, 4'd0);
+        chk3("crt v reads its own field",   eff_crt_v, 3'd7);
+
+        // The sync widths have no menu entry, so the register is their
+        // only source and needs no override bit.
+        io_write(16'h8988, 8'h2B);
+        #1;
+        chk3("vsync width from the register", eff_vsync_w, 3'd3);
+        chk3("hsync width from the register", eff_hsync_w, 3'd5);
+        io_read (16'h8988, rd);
+        if (rd !== 8'h2B) fail($sformatf("sync register read %02h expected 2B", rd));
+        io_write(16'h8987, 8'h00);
+        io_write(16'h8988, 8'h00);
+
         // ---- reserved ports --------------------------------------------------------
-        io_write(16'h8987, 8'hFF);
-        io_read (16'h8987, rd);
-        if (rd !== 8'h00) fail($sformatf("reserved port read %02h expected 00", rd));
         io_read (16'h898F, rd);
         if (rd !== 8'h00) fail($sformatf("reserved port 898F read %02h expected 00", rd));
 

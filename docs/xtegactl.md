@@ -40,8 +40,10 @@ reserved one returns a defined zero rather than whatever the bus was holding.
 | `8983h` | R/W | Video — `[1:0]` VGA 13h+ |
 | `8984h` | R/W | Input — `[1:0]` joy 1 · `[3:2]` joy 2 · `[5:4]` swap · `[7:6]` joy sync |
 | `8985h` | R/W | MIDI — `[1:0]` MT32-pi mode |
-| `8986h` | R/W | Expansion 2 — `[1:0]` Tandy sound |
-| `8987h`–`898Fh` | — | Reserved, read as zero |
+| `8986h` | R/W | Expansion 2 — `[1:0]` Tandy sound · `[3:2]` Sound Blaster |
+| `8987h` | R/W | CRT offset — `[3:0]` H · `[6:4]` V · `[7]` override |
+| `8988h` | R/W | Sync width — `[2:0]` VSync · `[5:3]` HSync (`0` = Auto) |
+| `8989h`–`898Fh` | — | Reserved, read as zero |
 
 ### Field values
 
@@ -57,6 +59,7 @@ reserved one returns a defined zero rather than whatever the bus was holding.
 | Joy sync to CPU | 2 | OSD | off | on | — | |
 | MT32-pi mode | 2 | OSD | MT-32 | General MIDI | — | |
 | Tandy sound | 2 | *build* | enabled | disabled | — | |
+| Sound Blaster | 2 | OSD | enabled | disabled | — | |
 
 Speed is the only field wider than two bits, because it picks between four
 choices rather than three. Values above `4` are not choices, so they read as
@@ -79,6 +82,37 @@ It earns a field because detection cuts both ways: a game that probes `0C0h`,
 finds a Tandy and picks its Tandy music driver may not be the one you wanted,
 and `notandy` takes the chip away for that program without disturbing anything
 else.
+
+## The Sound Blaster takes 220h from the C/MS
+
+Both cards live at 220h and they collide on `226h`/`227h`, where one puts
+its DSP reset and the other its detection register. Only one of them can
+answer, so the OSD offers them as a single three-way choice and cannot ask
+for both.
+
+These two fields are independent, though, and a program can set either.
+When both say yes the Sound Blaster wins: a program that went out of its
+way to ask for one is a better guess at intent than a default left
+enabled. Asking for the Sound Blaster therefore takes the C/MS away for
+that program, and giving it back is a matter of clearing the field.
+
+## Screen geometry
+
+Centring a picture is per-program work rather than a property of the
+machine — the offsets that suit one game's overscan suit the next one
+badly — so a launcher can set them at `8987h` on its way past.
+
+The offsets cannot use the usual rule where a zero field means defer,
+because zero is a real offset. Bit 7 says whether the register is
+speaking at all: clear it and the OSD's own H and V offsets apply, set it
+and the register's do.
+
+The sync widths at `8988h` need no such bit, because they have no menu
+entry left to defer to — this register is their only source. In practice
+they are left on Auto, which is what freed their six status bits for
+the 220h selector and for Swap Joysticks. Zero means Auto and zero is what
+the register holds out of reset, so a core nobody has written to starts in
+Auto exactly as it always did.
 
 ## Why the block is at 8980h
 

@@ -4,6 +4,11 @@ set_global_assignment -name QIP_FILE rtl/common/common.qip
 set_global_assignment -name QIP_FILE rtl/video/video.qip
 set_global_assignment -name QIP_FILE rtl/uart/uart.qip
 set_global_assignment -name SYSTEMVERILOG_FILE "rtl/sound/saa1099.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE "rtl/sound/soundblaster.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE "rtl/sound/sb_dsp.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE "rtl/sound/sb_mixer.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE "rtl/sound/sb_volume.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE "rtl/sound/sb_dma_glue.sv"
 set_global_assignment -name QIP_FILE rtl/sound/jtopl/hdl/jtopl2.qip
 set_global_assignment -name QIP_FILE rtl/sound/jt89/hdl/jt89.qip
 set_global_assignment -name QIP_FILE rtl/8088/index.qip
