@@ -52,6 +52,7 @@ mkdir -p "$BUILD_DIR"
 # headers their own directory has to be on the include path for.
 declare -A SOURCES=(
     [bios_hold_notice_tb]="HDL/bios_hold_notice.sv"
+    [reset_pending_notice_tb]="HDL/reset_pending_notice.sv"
     [splash_f12_pause_tb]="HDL/splash_f12_pause.sv"
     [ega_bios_loaded_latch_tb]="HDL/ega_bios_loaded_latch.sv HDL/rom_presence_latch.sv"
     [ram_refresh_collision_tb]="HDL/RAM.sv HDL/KFSDRAM/HDL/KFSDRAM.sv"

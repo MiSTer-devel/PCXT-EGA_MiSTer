@@ -249,7 +249,9 @@ module emu
 		"OSD: System & BIOS,",
 		"No EGA BIOS selected\n",
 		"Machine halted\n",
-		"OSD: System & BIOS;"
+		"OSD: System & BIOS,",
+		"That setting is applied\n",
+		"when the machine resets;"
 	};
 
     localparam CONF_STR = {
@@ -1048,6 +1050,12 @@ module emu
     wire bios_hold;
     wire [7:0] info;
     wire info_req;
+    wire [7:0] bios_info;
+    wire       bios_info_req;
+    // Driven by reset_pending_notice, instantiated with the MMC block below
+    // because the 2nd SD card mapping it watches is declared there.
+    wire [7:0] pending_info;
+    wire       pending_info_req;
 
     bios_hold_notice bios_notice (
         .clock             (clk_14_318),
@@ -1055,9 +1063,16 @@ module emu
         .bios_missing_pcxt (bios_missing_pcxt),
         .bios_missing_ega  (bios_missing_ega),
         .hold              (bios_hold),
-        .info              (info),
-        .info_req          (info_req)
+        .info              (bios_info),
+        .info_req          (bios_info_req)
     );
+
+    // The halt notice wins the info box: its machine is stopped, and the
+    // reset-pending one is only worth reading on a machine that is running.
+    // reset_pending_notice is held off by the same signal, so in practice the
+    // two never ask at once.
+    assign info     = bios_info_req ? bios_info : pending_info;
+    assign info_req = bios_info_req | pending_info_req;
 
     wire splashscreen = splash_timed | bios_hold;
 
@@ -1657,6 +1672,24 @@ module emu
             use_mmc <= status[22:21];
         else
             use_mmc <= use_mmc;
+
+    // Every menu option that is sampled only while reset is asserted. Each one
+    // exposes both the selection and what the machine is actually running on,
+    // so a plain comparison is all "pending" means. It reads false throughout
+    // reset, because that is exactly when the latches track their source, so
+    // this cannot fire on the way out of a cold boot.
+    wire reset_pending = (cpu_type_8086_osd       != is8086_applied)
+                       | (ega_monitor_profile_osd != ega_monitor_profile_applied)
+                       | (status[22:21]           != use_mmc);
+
+    reset_pending_notice reset_notice (
+        .clock      (clk_14_318),
+        .pending    (reset_pending),
+        .osd_status (OSD_STATUS),
+        .suppress   (bios_hold),
+        .info       (pending_info),
+        .info_req   (pending_info_req)
+    );
 
     assign  SD_SCK      = spi_clk;
     assign  SD_MOSI     = spi_mosi;
