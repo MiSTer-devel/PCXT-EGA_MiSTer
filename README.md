@@ -346,6 +346,37 @@ See [docs/known-issues.md](docs/known-issues.md) for what remains open, and
 behind how the Max CPU speed setting is built — what makes it fragile,
 which parts were fixed and how, and what is still outstanding.
 
+## XTEGACTL — per-program hardware control
+
+`XTEGACTL.COM` sets the machine up from DOS the way a program wants it, so a
+batch file can do what you would otherwise do by hand in the OSD:
+
+```
+XTEGACTL 4.77 adlib joy1=digital
+GAME.EXE
+XTEGACTL reset
+```
+
+It can set the CPU speed, Fake 286 FLAGS, the OPL2 address (or turn it off),
+C/MS, EMS, UMB, VGA 13h+, both joysticks (analog, digital or disabled), the
+joystick swap and CPU-speed sync, and the MT32-pi mode. Anything you do not
+name is left to the OSD, and settings are not cumulative — each run rewrites
+them all, so nothing leaks from one program into the next. `XTEGACTL reset`
+hands everything back to the menu.
+
+Everything it can change applies immediately; nothing in it needs a machine
+reset. Options the core only samples during reset — CPU Type, Monitor and
+2nd SD card — are deliberately not included, because a program would have to
+reboot the machine to make them take. Those stay in the OSD, which now tells
+you when one of them is waiting on a reset.
+
+It replaces `XTCTL.EXE`, which is retired on this core along with its `8888h`
+port. Three of XTCTL's options had become silent no-ops here, and its speed
+names never matched the speeds they picked. See
+[`docs/xtegactl.md`](docs/xtegactl.md) for the register map and the reasoning,
+and [`SW/XTEGACTL/README.txt`](SW/XTEGACTL/README.txt) for the full option
+list.
+
 ## RTC/CMOS port
 
 The previous CGA/Hercules-based core exposed its RTC/CMOS device at
@@ -446,9 +477,11 @@ only pre-formatted images, as it will not be possible to format them from MS-DOS
 * `rtl/video/` — the EGA core, the VGA 13h+ blocks and their testbenches
 * `rtl/KFPC-XT/` — chipset, peripherals, RAM and the SDRAM controller
 * `SW/vga/` — `vgatsr.asm`/`vgatsr.com`, the VGA 13h+ TSR
+* `SW/XTEGACTL/` — the per-program hardware control tool
 * `SW/ROMs/` — scripts for preparing system ROMs
 * `SW/8088_bios/` — Micro8088 BIOS sources and binaries
-* `docs/` — open issues, and the root-cause analysis of the Max CPU speed setting
+* `docs/` — open issues, the XTEGACTL reference, and the root-cause analysis of
+  the Max CPU speed setting
 * `docs/report/` — source for the [technical report](https://aitorgomez.net/pcxt-ega/core-report)
 
 ## Developers

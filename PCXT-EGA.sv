@@ -349,7 +349,55 @@ module emu
     // in reset, just as a real EGA card samples its switches during POST.
     wire  [1:0] ega_monitor_profile_osd = status[45:44];
     wire  [1:0] ega_monitor_profile_applied;
-    wire [7:0]  xtctl;
+    // XTEGACTL. The register file is decoded down in the chipset; what the
+    // fields mean is resolved here, where the menu status lives. Every field
+    // reads zero as "leave it to the OSD", so with nothing written the machine
+    // behaves exactly as the menu says.
+    wire [7:0]  xtegactl_cpu, xtegactl_exp, xtegactl_vid, xtegactl_inp, xtegactl_midi;
+    wire [1:0]  eff_speed;
+    wire        eff_fake286;
+    wire [1:0]  eff_opl2;
+    wire        eff_cms, eff_ems, eff_umb, eff_vga13;
+    wire        eff_joy1_digital, eff_joy1_disable;
+    wire        eff_joy2_digital, eff_joy2_disable;
+    wire        eff_joy_sync, eff_joy_swap, eff_mt32_gm;
+
+    xtegactl_resolve xtegactl_apply (
+        .reg_cpu          (xtegactl_cpu),
+        .reg_exp          (xtegactl_exp),
+        .reg_vid          (xtegactl_vid),
+        .reg_inp          (xtegactl_inp),
+        .reg_midi         (xtegactl_midi),
+        .osd_speed        (status[18:17]),
+        .osd_fake286      (fake_286_flags_osd),
+        .osd_opl2         (status[43:42]),
+        .osd_cms          (~status[29]),
+        .osd_ems          (~status[5]),
+        .osd_umb          (~status[12]),
+        .osd_vga13        (vga_mode13_osd),
+        .osd_joy1_digital (status[23]),
+        .osd_joy1_disable (status[24]),
+        .osd_joy2_digital (status[25]),
+        .osd_joy2_disable (status[26]),
+        .osd_joy_sync     (status[27]),
+        .osd_joy_swap     (status[28]),
+        .osd_mt32_gm      (status[41]),
+        .eff_speed        (eff_speed),
+        .eff_fake286      (eff_fake286),
+        .eff_opl2         (eff_opl2),
+        .eff_cms          (eff_cms),
+        .eff_ems          (eff_ems),
+        .eff_umb          (eff_umb),
+        .eff_vga13        (eff_vga13),
+        .eff_joy1_digital (eff_joy1_digital),
+        .eff_joy1_disable (eff_joy1_disable),
+        .eff_joy2_digital (eff_joy2_digital),
+        .eff_joy2_disable (eff_joy2_disable),
+        .eff_joy_sync     (eff_joy_sync),
+        .eff_joy_swap     (eff_joy_swap),
+        .eff_mt32_gm      (eff_mt32_gm)
+    );
+
     wire [7:0]  uart_mode;
 
     //Keyboard Ps2
@@ -377,7 +425,10 @@ module emu
 
     wire [13:0] joy0, joy1;
     wire [15:0] joya0, joya1;
-    wire [4:0]  joy_opts = status[27:23];
+    // Bit order set by tandy_pcjr_joy: P1 type, P1 disable, P2 type, P2
+    // disable, turbo sync.
+    wire [4:0]  joy_opts = {eff_joy_sync, eff_joy2_disable, eff_joy2_digital,
+                            eff_joy1_disable, eff_joy1_digital};
 
     wire [1:0] scale = status[2:1];
     wire [2:0] screen_mode = status[16:14];
@@ -551,8 +602,7 @@ module emu
     logic  [1:0] ram_write_wait_cycle;
     logic        cycle_accrate;
     logic  [1:0] clk_select;
-    wire   [1:0] clk_select_next = ((xtctl[3:2] == 2'b00) && ~xtctl[7]) ? status[18:17] :
-                                   (xtctl[7] ? 2'b11 : xtctl[3:2] - 2'b01);
+    wire   [1:0] clk_select_next = eff_speed;
 
     always @(posedge clk_chipset, posedge reset)
     begin
@@ -638,7 +688,7 @@ module emu
     wire fake_286_flags_applied = fake_286_flags_meta[1];
 
     always_ff @(posedge clk_100)
-        fake_286_flags_meta <= {fake_286_flags_meta[0], fake_286_flags_osd};
+        fake_286_flags_meta <= {fake_286_flags_meta[0], eff_fake286};
 
     logic reset_cpu_ff = 1'b1;
     logic reset_cpu = 1'b1;
@@ -1157,9 +1207,9 @@ module emu
     assign  port_c_in[3:0] = port_b_out[3] ? sw[7:4] : sw[3:0];
 
 
-    wire ems_enabled_sel = `ENABLE_EMS ? ~status[5] : 1'b0;
+    wire ems_enabled_sel = `ENABLE_EMS ? eff_ems : 1'b0;
     wire [1:0] ems_address_sel = 2'b01; // Fixed D000 page frame avoids EGA and XT-IDE ROM conflicts.
-    wire umb_enabled_sel = `ENABLE_UMB ? ~status[12] : 1'b0;
+    wire umb_enabled_sel = `ENABLE_UMB ? eff_umb : 1'b0;
 
     always @(posedge clk_chipset)
     begin
@@ -1199,7 +1249,7 @@ module emu
 		.VGA_HBlank                         (HBlank),
 		.VGA_VBlank                         (VBlank),
 		.VGA_VBlank_border                  (VGA_VBlank_border),
-		.vga_mode13_osd                    (vga_mode13_osd),
+		.vga_mode13_osd                    (eff_vga13),
 		.vga_mode13_native                 (vga_mode13_native_osd),
 		.ega_monitor_profile               (ega_monitor_profile_applied),
 		.vga_mode13_active_out             (vga_mode13_active_video),
@@ -1250,13 +1300,13 @@ module emu
 		.ps2_mouseclk_out                   (ps2_mouse_clk_in),
 		.ps2_mousedat_out                   (ps2_mouse_data_in),
 		.joy_opts                           (joy_opts),           //Joy0-Disabled, Joy0-Type, Joy1-Disabled, Joy1-Type, turbo_sync
-		.joy0                               (status[28] ? joy1 : joy0),
-		.joy1                               (status[28] ? joy0 : joy1),
-		.joya0                              (status[28] ? joya1 : joya0),
-		.joya1                              (status[28] ? joya0 : joya1),
+		.joy0                               (eff_joy_swap ? joy1 : joy0),
+		.joy1                               (eff_joy_swap ? joy0 : joy1),
+		.joya0                              (eff_joy_swap ? joya1 : joya0),
+		.joya1                              (eff_joy_swap ? joya0 : joya1),
 		.jtopl2_snd_e                       (jtopl2_snd_e),
-		.opl2_io                            (xtctl[4] ? 2'b10 : status[43:42]),
-		.cms_en                             (~status[29]),
+		.opl2_io                            (eff_opl2),
+		.cms_en                             (eff_cms),
 		.o_cms_l                            (cms_l_snd_e),
 		.o_cms_r                            (cms_r_snd_e),
 		.clk_uart                           (clk_uart2_en),
@@ -1303,7 +1353,11 @@ module emu
 		.fdd_present                        (fdd_present),
 		.fdd_request                        (mgmt_req[7:6]),
 		.ide0_request                       (mgmt_req[2:0]),
-		.xtctl                              (xtctl),
+		.xtegactl_cpu                       (xtegactl_cpu),
+		.xtegactl_exp                       (xtegactl_exp),
+		.xtegactl_vid                       (xtegactl_vid),
+		.xtegactl_inp                       (xtegactl_inp),
+		.xtegactl_midi                      (xtegactl_midi),
 		.wait_count_clk_en                  (cpu_ce_negedge),
 		.ram_read_wait_cycle                (ram_read_wait_cycle),
 		.ram_write_wait_cycle               (ram_write_wait_cycle),
@@ -1592,7 +1646,7 @@ module emu
     // mt32-pi's I2C master to give up. Mirror ao486 and use only the genuine
     // system/user resets.
     wire        mt32_reset    = status[40] | RESET | status[0] | buttons[1];
-    wire        mt32_mode_req = status[41];
+    wire        mt32_mode_req = eff_mt32_gm;
     wire  [1:0] mt32_rom_req  = status[4:3];
     wire  [7:0] mt32_sf_req   = {5'd0, status[62:60]};
 

@@ -135,8 +135,12 @@ module PERIPHERALS #(
         output  logic           fdd_dma_req,
         input   logic           fdd_dma_ack,
         input   logic           terminal_count,
-        // XTCTL DATA
-        output  logic   [7:0]   xtctl = 8'h00,
+        // XTEGACTL register file, interpreted by xtegactl_resolve up top
+        output  logic   [7:0]   xtegactl_cpu,
+        output  logic   [7:0]   xtegactl_exp,
+        output  logic   [7:0]   xtegactl_vid,
+        output  logic   [7:0]   xtegactl_inp,
+        output  logic   [7:0]   xtegactl_midi,
         // Others
         output  logic           pause_core,
         input   logic           video_scandoubler_en,
@@ -286,7 +290,8 @@ module PERIPHERALS #(
     wire    mpu401_chip_select      = `ENABLE_MIDI ? (~address_enable_n && address[15:1] == (16'h0330 >> 1)) : 1'b0; // 0x330 .. 0x331 (MPU-401 UART mode)
     wire    lpt_chip_select         = (iorq && ~address_enable_n && address[15:1] == (16'h0378 >> 1)); // 0x378 ... 0x379
 	 wire    lpt_ctrl_select         = (iorq && ~address_enable_n && address[15:0] == 16'h037A); // 0x37A
-    wire    xtctl_chip_select       = (iorq && ~address_enable_n && address[15:0] == 16'h8888);
+    // The old XTCTL port lived at 8888h. It is retired: see xtegactl.sv for
+    // why that address was never a safe place to grow a register block.
     // 0x2C0 .. 0x2CF is claimed by the EGA core as an undocumented mirror of
     // 0x3C0 .. 0x3CF (attribute/sequencer/graphics controller index-data
     // pairs), so the RTC/CMOS device (used for the x86_launcher AppId, among
@@ -807,13 +812,11 @@ end
     reg [7:0] lpt_reg = 8'hFF;
 	 reg [7:0] lpt_ctrl = 8'h00;
 	 reg [7:0] lpt_enable_irq = 8'h00;
-    always_ff @(posedge clock, posedge reset)
+    // Nothing to clear on reset since XTCTL left: the registers written below
+    // all carry their own initialisers.
+    always_ff @(posedge clock)
     begin
-        if (reset)        
         begin
-            xtctl <= 8'b00;
-        end
-        else begin
             if (~io_write_n)
             begin
                 write_to_uart <= internal_data_bus;
@@ -835,9 +838,6 @@ end
                 lpt_ctrl <= internal_data_bus;
                 lpt_enable_irq <= internal_data_bus & 8'h10;
             end
-
-            if ((xtctl_chip_select) && (~io_write_n))
-                xtctl <= internal_data_bus;
         end
 
     end
@@ -1017,6 +1017,28 @@ end
         .address_enable_n (address_enable_n),
         .data_out         (ega_switch_sense_host_data),
         .output_enable    (ega_switch_sense_host_oe)
+    );
+
+    // Per-program hardware control, 8980h..898Fh. Only the register file lives
+    // here; what the fields mean is xtegactl_resolve, up where the OSD is.
+    wire [7:0] xtegactl_data;
+    wire       xtegactl_oe;
+
+    xtegactl xtegactl_ports (
+        .clock            (clock),
+        .reset            (reset),
+        .address          (address[15:0]),
+        .address_enable_n (address_enable_n),
+        .io_read_n        (io_read_n),
+        .io_write_n       (io_write_n),
+        .data_in          (internal_data_bus),
+        .data_out         (xtegactl_data),
+        .output_enable    (xtegactl_oe),
+        .reg_cpu          (xtegactl_cpu),
+        .reg_exp          (xtegactl_exp),
+        .reg_vid          (xtegactl_vid),
+        .reg_inp          (xtegactl_inp),
+        .reg_midi         (xtegactl_midi)
     );
 
     always_ff @(posedge clock)
@@ -1785,10 +1807,10 @@ end
             data_bus_out_from_chipset <= 1'b1;
             data_bus_out <= 8'hE0 | lpt_ctrl | lpt_enable_irq;
         end
-        else if ((xtctl_chip_select) && (~io_read_n))
+        else if (xtegactl_oe)
         begin
             data_bus_out_from_chipset <= 1'b1;
-            data_bus_out <= xtctl;
+            data_bus_out <= xtegactl_data;
         end
         else if (joystick_select && ~io_read_n)
         begin

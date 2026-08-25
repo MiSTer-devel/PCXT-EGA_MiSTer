@@ -171,8 +171,12 @@ module CHIPSET #(
         output  logic   [1:0]   fdd_present,
         output  logic   [1:0]   fdd_request,
         output  logic   [2:0]   ide0_request,
-        // XTCTL DATA
-        output  logic   [7:0]   xtctl,
+        // XTEGACTL register file
+        output  logic   [7:0]   xtegactl_cpu,
+        output  logic   [7:0]   xtegactl_exp,
+        output  logic   [7:0]   xtegactl_vid,
+        output  logic   [7:0]   xtegactl_inp,
+        output  logic   [7:0]   xtegactl_midi,
         // RAM wait mode
         input   logic           wait_count_clk_en,
         input   logic   [1:0]   ram_read_wait_cycle,
@@ -449,7 +453,11 @@ module CHIPSET #(
         .fdd_dma_req                        (fdd_dma_req),
         .fdd_dma_ack                        (~dma_acknowledge_n[2]),
         .terminal_count                     (terminal_count_n),
-        .xtctl                              (xtctl),
+        .xtegactl_cpu                       (xtegactl_cpu),
+        .xtegactl_exp                       (xtegactl_exp),
+        .xtegactl_vid                       (xtegactl_vid),
+        .xtegactl_inp                       (xtegactl_inp),
+        .xtegactl_midi                      (xtegactl_midi),
         .pause_core                         (pause_core),
         .video_scandoubler_en                  (video_scandoubler_en),
         .ega_dot_toggle                     (ega_dot_toggle),
