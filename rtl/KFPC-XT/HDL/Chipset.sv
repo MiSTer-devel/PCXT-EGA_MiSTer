@@ -114,6 +114,9 @@ module CHIPSET #(
         input   logic   [15:0]  joya1,
         // JTOPL
         output  logic   [15:0]  jtopl2_snd_e,
+        // Tandy 1000 sound
+        output  logic   [10:0]  tandy_snd_e,
+        input   logic           tandy_en,
         input   logic   [1:0]   opl2_io,
         // C/MS Audio
         input   logic           cms_en,
@@ -209,6 +212,8 @@ module CHIPSET #(
     logic           memory_access_ready;
     logic           video_memory_access_ready;
     logic           video_io_access_ready;
+    // Stays high with the Tandy chip compiled out, so it costs nothing then.
+    logic           tandy_snd_rdy;
     logic           ram_address_select_n;
     logic   [7:0]   internal_data_bus;
     logic   [7:0]   internal_data_bus_ext;
@@ -297,7 +302,7 @@ module CHIPSET #(
         .processor_ready                    (processor_ready),
         .dma_ready                          (dma_ready),
         .dma_wait_n                         (dma_wait_n),
-        .io_channel_ready                   (io_channel_ready & memory_access_ready & video_memory_access_ready & io_settle_ready & video_io_access_ready),
+        .io_channel_ready                   (io_channel_ready & memory_access_ready & video_memory_access_ready & io_settle_ready & video_io_access_ready & tandy_snd_rdy),
         .io_read_n                          (io_read_n),
         .io_write_n                         (io_write_n),
         .memory_read_n                      (memory_read_n),
@@ -414,6 +419,9 @@ module CHIPSET #(
         .ps2_clock_out                      (ps2_clock_out),
         .ps2_data_out                       (ps2_data_out),
         .jtopl2_snd_e                       (jtopl2_snd_e),
+        .tandy_snd_e                        (tandy_snd_e),
+        .tandy_snd_rdy                      (tandy_snd_rdy),
+        .tandy_en                           (tandy_en),
         .opl2_io                            (opl2_io),
         .cms_en                             (cms_en),
         .o_cms_l                            (o_cms_l),

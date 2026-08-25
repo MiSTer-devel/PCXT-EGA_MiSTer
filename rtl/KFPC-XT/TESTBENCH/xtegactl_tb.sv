@@ -45,6 +45,7 @@ module xtegactl_tb;
     logic       osd_joy_sync     = 1'b1;
     logic       osd_joy_swap     = 1'b1;
     logic       osd_mt32_gm      = 1'b1;
+    logic       build_tandy      = 1'b1;
 
     wire [1:0] eff_speed;
     wire       eff_fake286;
@@ -52,9 +53,9 @@ module xtegactl_tb;
     wire       eff_cms, eff_ems, eff_umb, eff_vga13;
     wire       eff_joy1_digital, eff_joy1_disable;
     wire       eff_joy2_digital, eff_joy2_disable;
-    wire       eff_joy_sync, eff_joy_swap, eff_mt32_gm;
+    wire       eff_joy_sync, eff_joy_swap, eff_mt32_gm, eff_tandy;
 
-    wire [7:0] reg_cpu, reg_exp, reg_vid, reg_inp, reg_midi;
+    wire [7:0] reg_cpu, reg_exp, reg_vid, reg_inp, reg_midi, reg_exp2;
 
     xtegactl dut (
         .clock(clock), .reset(reset),
@@ -62,26 +63,26 @@ module xtegactl_tb;
         .io_read_n(io_read_n), .io_write_n(io_write_n),
         .data_in(data_in), .data_out(data_out), .output_enable(output_enable),
         .reg_cpu(reg_cpu), .reg_exp(reg_exp), .reg_vid(reg_vid),
-        .reg_inp(reg_inp), .reg_midi(reg_midi)
+        .reg_inp(reg_inp), .reg_midi(reg_midi), .reg_exp2(reg_exp2)
     );
 
     xtegactl_resolve res (
         .reg_cpu(reg_cpu), .reg_exp(reg_exp), .reg_vid(reg_vid),
-        .reg_inp(reg_inp), .reg_midi(reg_midi),
+        .reg_inp(reg_inp), .reg_midi(reg_midi), .reg_exp2(reg_exp2),
         .osd_speed(osd_speed), .osd_fake286(osd_fake286), .osd_opl2(osd_opl2),
         .osd_cms(osd_cms), .osd_ems(osd_ems), .osd_umb(osd_umb),
         .osd_vga13(osd_vga13),
         .osd_joy1_digital(osd_joy1_digital), .osd_joy1_disable(osd_joy1_disable),
         .osd_joy2_digital(osd_joy2_digital), .osd_joy2_disable(osd_joy2_disable),
         .osd_joy_sync(osd_joy_sync), .osd_joy_swap(osd_joy_swap),
-        .osd_mt32_gm(osd_mt32_gm),
+        .osd_mt32_gm(osd_mt32_gm), .build_tandy(build_tandy),
         .eff_speed(eff_speed), .eff_fake286(eff_fake286), .eff_opl2(eff_opl2),
         .eff_cms(eff_cms), .eff_ems(eff_ems), .eff_umb(eff_umb),
         .eff_vga13(eff_vga13),
         .eff_joy1_digital(eff_joy1_digital), .eff_joy1_disable(eff_joy1_disable),
         .eff_joy2_digital(eff_joy2_digital), .eff_joy2_disable(eff_joy2_disable),
         .eff_joy_sync(eff_joy_sync), .eff_joy_swap(eff_joy_swap),
-        .eff_mt32_gm(eff_mt32_gm)
+        .eff_mt32_gm(eff_mt32_gm), .eff_tandy(eff_tandy)
     );
 
     integer errors = 0;
@@ -152,6 +153,7 @@ module xtegactl_tb;
         chk ("joy sync defers",   eff_joy_sync,     1'b1);
         chk ("joy swap defers",   eff_joy_swap,     1'b1);
         chk ("mt32 defers",       eff_mt32_gm,      1'b1);
+        chk ("tandy defers to the build", eff_tandy, 1'b1);
 
         // ---- signature ----------------------------------------------------
         io_read(16'h8980, rd);
@@ -240,6 +242,21 @@ module xtegactl_tb;
         io_write(16'h8985, 8'h02); chk("mt32 2 selects General MIDI", eff_mt32_gm, 1'b1);
         io_write(16'h8985, 8'h00); chk("mt32 defers again",          eff_mt32_gm, 1'b1);
 
+        // ---- Tandy sound, in its own register ---------------------------------------
+        // Unlike every other field this one has no menu option behind it, so a
+        // zero falls back to what the build says rather than to the OSD.
+        io_write(16'h8986, 8'h01); chk("tandy 1 enables",  eff_tandy, 1'b1);
+        io_write(16'h8986, 8'h02); chk("tandy 2 disables", eff_tandy, 1'b0);
+        io_write(16'h8986, 8'h00); chk("tandy 0 defers to the build", eff_tandy, 1'b1);
+
+        // With the chip compiled out the build says no, and the field must not
+        // be able to conjure hardware that is not there.
+        build_tandy = 1'b0;
+        io_write(16'h8986, 8'h00); chk("tandy 0 follows a build without the chip", eff_tandy, 1'b0);
+        io_write(16'h8986, 8'h02); chk("tandy 2 still disables", eff_tandy, 1'b0);
+        build_tandy = 1'b1;
+        io_write(16'h8986, 8'h00);
+
         // ---- readback ------------------------------------------------------------
         io_write(16'h8981, 8'h12);
         io_read (16'h8981, rd);
@@ -249,8 +266,8 @@ module xtegactl_tb;
         if (rd !== 8'h5A) fail($sformatf("input register read %02h expected 5A", rd));
 
         // ---- reserved ports --------------------------------------------------------
-        io_write(16'h8986, 8'hFF);
-        io_read (16'h8986, rd);
+        io_write(16'h8987, 8'hFF);
+        io_read (16'h8987, rd);
         if (rd !== 8'h00) fail($sformatf("reserved port read %02h expected 00", rd));
         io_read (16'h898F, rd);
         if (rd !== 8'h00) fail($sformatf("reserved port 898F read %02h expected 00", rd));
@@ -282,6 +299,7 @@ module xtegactl_tb;
         reset = 1'b0;
         chk("reset returns cms to the OSD", eff_cms, 1'b1);
         chk("reset returns umb to the OSD", eff_umb, 1'b1);
+        chk("reset returns tandy to the build", eff_tandy, 1'b1);
         io_read(16'h8982, rd);
         if (rd !== 8'h00) fail($sformatf("expansion register survived reset as %02h", rd));
 

@@ -20,7 +20,8 @@
 //   8983h  R/W video      [1:0] VGA 13h+
 //   8984h  R/W input      [1:0] joy 1  [3:2] joy 2  [5:4] swap  [7:6] joy sync
 //   8985h  R/W MIDI       [1:0] MT32-pi mode
-//   8986h..898Fh          reserved, read as zero
+//   8986h  R/W expansion 2 [1:0] Tandy sound
+//   8987h..898Fh          reserved, read as zero
 //
 // Why 8980h and not next to the old 8888h port: the motherboard chip select
 // decoder ignores address[15:10] entirely - it qualifies on ~address[9] &
@@ -58,7 +59,8 @@ module xtegactl #(
     output reg   [7:0] reg_exp  = 8'h00,
     output reg   [7:0] reg_vid  = 8'h00,
     output reg   [7:0] reg_inp  = 8'h00,
-    output reg   [7:0] reg_midi = 8'h00
+    output reg   [7:0] reg_midi = 8'h00,
+    output reg   [7:0] reg_exp2 = 8'h00
 );
 
     localparam [11:0] BLOCK = 12'h898;
@@ -73,6 +75,7 @@ module xtegactl #(
             reg_vid  <= 8'h00;
             reg_inp  <= 8'h00;
             reg_midi <= 8'h00;
+            reg_exp2 <= 8'h00;
         end
         else if (block_hit & ~io_write_n) begin
             case (address[3:0])
@@ -81,6 +84,7 @@ module xtegactl #(
                 4'h3: reg_vid  <= data_in;
                 4'h4: reg_inp  <= data_in;
                 4'h5: reg_midi <= data_in;
+                4'h6: reg_exp2 <= data_in;
                 default: ;      // signature and the reserved ports ignore writes
             endcase
         end
@@ -95,6 +99,7 @@ module xtegactl #(
             4'h3:    read_mux = reg_vid;
             4'h4:    read_mux = reg_inp;
             4'h5:    read_mux = reg_midi;
+            4'h6:    read_mux = reg_exp2;
             default: read_mux = 8'h00;
         endcase
     end

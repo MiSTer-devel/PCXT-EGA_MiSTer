@@ -16,6 +16,9 @@
 `ifndef ENABLE_MIDI
 `define ENABLE_MIDI 1
 `endif
+`ifndef ENABLE_TANDY_AUDIO
+`define ENABLE_TANDY_AUDIO 0
+`endif
 
 module PERIPHERALS #(
         parameter ps2_over_time = 16'd1000,
@@ -89,6 +92,10 @@ module PERIPHERALS #(
         input   logic   [15:0]  joya1,
         // JTOPL
         output  logic   [15:0]  jtopl2_snd_e,
+        // Tandy 1000 sound
+        output  logic   [10:0]  tandy_snd_e,
+        output  logic           tandy_snd_rdy,
+        input   logic           tandy_en,
         input   logic   [1:0]   opl2_io,
         // C/MS Audio
         input   logic           cms_en,
@@ -274,6 +281,18 @@ module PERIPHERALS #(
     wire    timer_chip_select_n     = chip_select_n[2]; // 0x40 .. 0x5F
     wire    ppi_chip_select_n       = chip_select_n[3]; // 0x60 .. 0x7F
     assign  dma_page_chip_select_n  = chip_select_n[4]; // 0x80 .. 0x8F
+    // Tandy 1000 sound. chip_select_n[6] is the 0xC0..0xDF block, which nothing
+    // else in this core claims; address[4] narrows it to the 0xC0..0xCF the
+    // SN76489 actually answers on.
+    //
+    // The parent PCXT instead adds ~address[4] to the shared decoder above,
+    // which tightens every on-board device to its real range at once. That is
+    // more faithful, but it silently changes how the DMA controller, PIC, PIT
+    // and PPI decode, and none of that can be tested here. Qualifying only this
+    // select keeps the change to the device being added.
+    // tandy_en is the XTEGACTL runtime switch, so a program that misdetects a
+    // Tandy and picks the wrong music driver can take the chip away again.
+    wire    tandy_chip_select_n     = `ENABLE_TANDY_AUDIO ? (chip_select_n[6] | address[4] | ~tandy_en) : 1'b1; // 0xC0 .. 0xCF
     wire    joystick_select         = (iorq && ~address_enable_n && address[15:3] == (16'h0200 >> 3)); // 0x200 .. 0x207
     wire    opl_388_chip_select     = `ENABLE_OPL2 ? (iorq && ~address_enable_n && ~opl2_io[1] && address[15:1] == (16'h0388 >> 1)) : 1'b0; // 0x388 .. 0x389 (Adlib)
     wire    opl_228_chip_select     = `ENABLE_OPL2 ? (iorq && ~address_enable_n && (opl2_io == 2'b01) && address[15:1] == (16'h0228 >> 1)) : 1'b0; // 0x228 .. 0x229 (Sound Blaster FM)
@@ -639,6 +658,30 @@ module PERIPHERALS #(
         .irq_n(),
         .snd(jtopl2_snd_e_int),
         .sample()
+    );
+
+    // Tandy 1000 sound (SN76489). It shares the OPL2's 3.579 MHz clock enable,
+    // which is the part's real clock on a Tandy 1000.
+    //
+    // ready falls while a write is being absorbed and gates io_channel_ready up
+    // in the chipset, so the CPU is held rather than losing writes. With the
+    // chip compiled out it has to read high, or the machine would wait forever
+    // on a device that is not there.
+    wire [10:0] tandy_snd_e_int;
+    wire        tandy_snd_rdy_int;
+    assign tandy_snd_e   = (`ENABLE_TANDY_AUDIO && tandy_en) ? tandy_snd_e_int : 11'd0;
+    assign tandy_snd_rdy = `ENABLE_TANDY_AUDIO ? tandy_snd_rdy_int : 1'b1;
+
+    jt89 sn76489
+    (
+        .rst(reset),
+        .clk(clock),
+        .clk_en(clk_en_opl2),           // 3.579 MHz
+        .wr_n(io_write_n),
+        .cs_n(tandy_chip_select_n),
+        .din(internal_data_bus),
+        .sound(tandy_snd_e_int),
+        .ready(tandy_snd_rdy_int)
     );
 
 

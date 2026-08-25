@@ -50,7 +50,7 @@ For an architectural overview and possible future improvements, see the
 * EGA BIOS option ROM support (required — the card is initialised by its own ROM, as on real hardware)
 * Optional EMS memory up to 2 MiB, with a fixed D000h-DFFFh page frame
 * XTIDE support
-* Audio: AdLib, C/MS and PC speaker
+* Audio: AdLib, C/MS, Tandy 1000 (SN76489) and PC speaker
 * Joystick support and serial mouse on COM1 (for example CTMOUSE 1.9, in `hdd/`)
 * Second SD card support
 * EGA graphical boot splash
@@ -358,8 +358,11 @@ XTEGACTL reset
 ```
 
 It can set the CPU speed, Fake 286 FLAGS, the OPL2 address (or turn it off),
-C/MS, EMS, UMB, VGA 13h+, both joysticks (analog, digital or disabled), the
-joystick swap and CPU-speed sync, and the MT32-pi mode. Anything you do not
+C/MS, EMS, UMB, VGA 13h+, Tandy sound, both joysticks (analog, digital or
+disabled), the joystick swap and CPU-speed sync, and the MT32-pi mode. Taking
+the Tandy chip away matters more than it sounds: a game that probes `0C0h`,
+finds one and switches to its Tandy music driver may not be the one you
+wanted. Anything you do not
 name is left to the OSD, and settings are not cumulative — each run rewrites
 them all, so nothing leaks from one program into the next. `XTEGACTL reset`
 hands everything back to the menu.
@@ -376,6 +379,25 @@ names never matched the speeds they picked. See
 [`docs/xtegactl.md`](docs/xtegactl.md) for the register map and the reasoning,
 and [`SW/XTEGACTL/README.txt`](SW/XTEGACTL/README.txt) for the full option
 list.
+
+## Tandy 1000 sound
+
+An SN76489 at `0C0h`-`0CFh`, brought over from the parent PCXT core. It is the
+audio part only: this fork has no Tandy video and no Tandy keyboard, so a
+program that expects a whole Tandy 1000 will not find one — but the many DOS
+games that simply write to the sound chip when they detect it will play through
+it.
+
+Include or omit it at build time from `config.tcl`:
+
+```tcl
+set_global_assignment -name VERILOG_MACRO "ENABLE_TANDY_AUDIO=1"
+```
+
+Its level follows the **Speaker Volume** setting rather than having a control of
+its own. The parent core has a separate "Tandy Volume" option, but the 64-bit
+OSD status word in this fork is fully allocated with no bit left to spend on
+one; both are internal beeper-class sources, so they share a control.
 
 ## RTC/CMOS port
 

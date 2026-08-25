@@ -40,7 +40,8 @@ reserved one returns a defined zero rather than whatever the bus was holding.
 | `8983h` | R/W | Video — `[1:0]` VGA 13h+ |
 | `8984h` | R/W | Input — `[1:0]` joy 1 · `[3:2]` joy 2 · `[5:4]` swap · `[7:6]` joy sync |
 | `8985h` | R/W | MIDI — `[1:0]` MT32-pi mode |
-| `8986h`–`898Fh` | — | Reserved, read as zero |
+| `8986h` | R/W | Expansion 2 — `[1:0]` Tandy sound |
+| `8987h`–`898Fh` | — | Reserved, read as zero |
 
 ### Field values
 
@@ -55,6 +56,7 @@ reserved one returns a defined zero rather than whatever the bus was holding.
 | Swap joysticks | 2 | OSD | normal | swapped | — | |
 | Joy sync to CPU | 2 | OSD | off | on | — | |
 | MT32-pi mode | 2 | OSD | MT-32 | General MIDI | — | |
+| Tandy sound | 2 | *build* | enabled | disabled | — | |
 
 Speed is the only field wider than two bits, because it picks between four
 choices rather than three. Values above `4` are not choices, so they read as
@@ -64,6 +66,19 @@ VGA 13h+ controls only *whether* the extension is present, not *which* timing
 profile it uses. The core already carries those as separate signals
 (`vga_mode13_osd` and `vga_mode13_native`), so the program decides whether and
 the user keeps deciding which — Native or 60 Hz — from the OSD.
+
+Tandy sound is the one field with no menu option behind it: whether the SN76489
+exists at all is a build-time choice (`ENABLE_TANDY_AUDIO` in `config.tcl`), so
+there is no status bit to defer to. Zero therefore means "whatever the build
+says" rather than "whatever the menu says". The distinction only shows with the
+chip compiled out, where the field cannot switch on hardware that is not there
+— enforced again at the chip select itself, so a stray write cannot reach a
+device that was never built.
+
+It earns a field because detection cuts both ways: a game that probes `0C0h`,
+finds a Tandy and picks its Tandy music driver may not be the one you wanted,
+and `notandy` takes the chip away for that program without disturbing anything
+else.
 
 ## Why the block is at 8980h
 

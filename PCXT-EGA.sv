@@ -34,6 +34,9 @@
 `ifndef ENABLE_UMB
 `define ENABLE_UMB 0
 `endif
+`ifndef ENABLE_TANDY_AUDIO
+`define ENABLE_TANDY_AUDIO 0
+`endif
 
 module emu
     (
@@ -353,14 +356,14 @@ module emu
     // fields mean is resolved here, where the menu status lives. Every field
     // reads zero as "leave it to the OSD", so with nothing written the machine
     // behaves exactly as the menu says.
-    wire [7:0]  xtegactl_cpu, xtegactl_exp, xtegactl_vid, xtegactl_inp, xtegactl_midi;
+    wire [7:0]  xtegactl_cpu, xtegactl_exp, xtegactl_vid, xtegactl_inp, xtegactl_midi, xtegactl_exp2;
     wire [1:0]  eff_speed;
     wire        eff_fake286;
     wire [1:0]  eff_opl2;
     wire        eff_cms, eff_ems, eff_umb, eff_vga13;
     wire        eff_joy1_digital, eff_joy1_disable;
     wire        eff_joy2_digital, eff_joy2_disable;
-    wire        eff_joy_sync, eff_joy_swap, eff_mt32_gm;
+    wire        eff_joy_sync, eff_joy_swap, eff_mt32_gm, eff_tandy;
 
     xtegactl_resolve xtegactl_apply (
         .reg_cpu          (xtegactl_cpu),
@@ -368,6 +371,7 @@ module emu
         .reg_vid          (xtegactl_vid),
         .reg_inp          (xtegactl_inp),
         .reg_midi         (xtegactl_midi),
+        .reg_exp2         (xtegactl_exp2),
         .osd_speed        (status[18:17]),
         .osd_fake286      (fake_286_flags_osd),
         .osd_opl2         (status[43:42]),
@@ -382,6 +386,7 @@ module emu
         .osd_joy_sync     (status[27]),
         .osd_joy_swap     (status[28]),
         .osd_mt32_gm      (status[41]),
+        .build_tandy      (`ENABLE_TANDY_AUDIO ? 1'b1 : 1'b0),
         .eff_speed        (eff_speed),
         .eff_fake286      (eff_fake286),
         .eff_opl2         (eff_opl2),
@@ -395,7 +400,8 @@ module emu
         .eff_joy2_disable (eff_joy2_disable),
         .eff_joy_sync     (eff_joy_sync),
         .eff_joy_swap     (eff_joy_swap),
-        .eff_mt32_gm      (eff_mt32_gm)
+        .eff_mt32_gm      (eff_mt32_gm),
+        .eff_tandy        (eff_tandy)
     );
 
     wire [7:0]  uart_mode;
@@ -1305,6 +1311,8 @@ module emu
 		.joya0                              (eff_joy_swap ? joya1 : joya0),
 		.joya1                              (eff_joy_swap ? joya0 : joya1),
 		.jtopl2_snd_e                       (jtopl2_snd_e),
+		.tandy_snd_e                        (tandy_snd_e),
+		.tandy_en                           (eff_tandy),
 		.opl2_io                            (eff_opl2),
 		.cms_en                             (eff_cms),
 		.o_cms_l                            (cms_l_snd_e),
@@ -1435,6 +1443,16 @@ module emu
 	 
     wire [15:0] jtopl2_snd_e;
     wire [16:0] jtopl2_snd = {jtopl2_snd_e[15], jtopl2_snd_e};
+    // Tandy 1000 sound. Sign-extended from 11 bits and scaled the way the
+    // parent PCXT does it, except for where the level comes from: the parent
+    // has a "Tandy Volume" menu option and this fork has no status bit left to
+    // spend on one, so it rides the Speaker Volume setting instead. Both are
+    // internal beeper-class sources, and turning one down without the other is
+    // not something a user is likely to want.
+    wire [10:0] tandy_snd_e;
+    wire [16:0] tandy_snd = `ENABLE_TANDY_AUDIO
+        ? {{{2{tandy_snd_e[10]}}, {4{tandy_snd_e[10]}}, tandy_snd_e} << status[33:32], 2'b00}
+        : 17'd0;
     wire [16:0] spk_vol =  {2'b00, {3'b000,~speaker_out} << status[33:32], 11'd0};
     wire        speaker_out;
 
@@ -1466,7 +1484,7 @@ module emu
     begin
         reg [16:0] tmp_l;
 
-        tmp_l <= jtopl2_snd + cms_l_snd + spk_vol + mt32_l_snd;
+        tmp_l <= jtopl2_snd + cms_l_snd + tandy_snd + spk_vol + mt32_l_snd;
 
         // clamp the output
         out_l <= (^tmp_l[16:15]) ? {tmp_l[16], {15{tmp_l[15]}}} : tmp_l[15:0];
@@ -1480,7 +1498,7 @@ module emu
     begin
         reg [16:0] tmp_r;
 
-        tmp_r <= jtopl2_snd + cms_r_snd + spk_vol + mt32_r_snd;
+        tmp_r <= jtopl2_snd + cms_r_snd + tandy_snd + spk_vol + mt32_r_snd;
 
         // clamp the output
         out_r <= (^tmp_r[16:15]) ? {tmp_r[16], {15{tmp_r[15]}}} : tmp_r[15:0];

@@ -33,12 +33,13 @@
 #define P_VID           0x8983
 #define P_INP           0x8984
 #define P_MIDI          0x8985
+#define P_EXP2          0x8986
 
 #define SIGNATURE       0x45    /* 'E' */
 
 /* Every field reads 0 as "leave it to the OSD" and 1..N as the N choices, in
    the same order the OSD lists them. */
-static unsigned char r_cpu, r_exp, r_vid, r_inp, r_midi;
+static unsigned char r_cpu, r_exp, r_vid, r_inp, r_midi, r_exp2;
 
 static int _argc;
 static char **_argv;
@@ -77,7 +78,8 @@ static void usage(char *argv0)
     printf("Video      vga13  novga13\n");
     printf("Input      joy1=analog|digital|off   joy2=analog|digital|off\n");
     printf("           swap  noswap      joysync  nojoysync\n");
-    printf("MIDI       mt32  gm\n\n");
+    printf("MIDI       mt32  gm\n");
+    printf("Tandy      tandy  notandy\n\n");
     printf("           reset       hand everything back to the OSD\n");
     printf("           status      show what is currently overridden\n\n");
     printf("Anything not named is left to the OSD. Settings are not cumulative:\n");
@@ -124,6 +126,7 @@ static void show(void)
     static char *enab[4]  = { "OSD", "enabled", "disabled", "-" };
     static char *joy[4]   = { "OSD", "analog", "digital", "disabled" };
     static char *midi[4]  = { "OSD", "MT-32", "General MIDI", "-" };
+    static char *tandy[4] = { "build default", "enabled", "disabled", "-" };
     unsigned char s;
 
     r_cpu  = (unsigned char)inp(P_CPU);
@@ -131,6 +134,7 @@ static void show(void)
     r_vid  = (unsigned char)inp(P_VID);
     r_inp  = (unsigned char)inp(P_INP);
     r_midi = (unsigned char)inp(P_MIDI);
+    r_exp2 = (unsigned char)inp(P_EXP2);
 
     s = (unsigned char)(r_cpu & 0x07);
     if (s > 4) s = 0;
@@ -148,6 +152,9 @@ static void show(void)
     printf("  Swap joysticks %s\n", onoff[(r_inp >> 4) & 3]);
     printf("  Joy CPU sync   %s\n", onoff[(r_inp >> 6) & 3]);
     printf("  MT32-pi mode   %s\n", midi[r_midi & 3]);
+    /* Tandy has no menu option behind it, so its "leave it alone" falls back
+       to whether the chip was built in rather than to a setting. */
+    printf("  Tandy sound    %s\n", tandy[r_exp2 & 3]);
     printf("\n\"OSD\" means the menu setting is in force.\n");
 }
 
@@ -186,7 +193,7 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    r_cpu = r_exp = r_vid = r_inp = r_midi = 0;
+    r_cpu = r_exp = r_vid = r_inp = r_midi = r_exp2 = 0;
 
     if (!opt("reset"))
     {
@@ -226,6 +233,9 @@ int main(int argc, char **argv)
         if (opt("mt32")) put(&r_midi, 0, 2, 1);
         else if (opt("gm")) put(&r_midi, 0, 2, 2);
 
+        if (opt("tandy")) put(&r_exp2, 0, 2, 1);
+        else if (opt("notandy")) put(&r_exp2, 0, 2, 2);
+
         /* Say so rather than silently doing nothing with it. */
         for (i = 1; i < argc && i < 64; i++)
         {
@@ -242,6 +252,7 @@ int main(int argc, char **argv)
     outp(P_VID,  r_vid);
     outp(P_INP,  r_inp);
     outp(P_MIDI, r_midi);
+    outp(P_EXP2, r_exp2);
 
     return 0;
 }

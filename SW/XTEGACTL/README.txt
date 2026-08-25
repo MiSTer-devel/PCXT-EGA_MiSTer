@@ -36,6 +36,17 @@ OPTIONS
   MIDI      mt32           MT32-pi in MT-32 mode
             gm             MT32-pi in General MIDI mode
 
+  Tandy     tandy  notandy
+
+            The SN76489 at 0C0h. Unlike everything else here this has no menu
+            option behind it - whether the chip exists at all is set when the
+            core is built - so leaving it unnamed follows the build rather than
+            a setting, and it cannot switch on a chip that was not built in.
+
+            Useful because detection cuts both ways: a game that probes 0C0h,
+            finds a Tandy and picks its Tandy music driver may not be the one
+            you wanted. "notandy" takes the chip away for that program only.
+
   reset     hand every setting back to the OSD
   status    print what is currently overridden
 

@@ -20,6 +20,7 @@ module xtegactl_resolve (
     input  wire  [7:0] reg_vid,
     input  wire  [7:0] reg_inp,
     input  wire  [7:0] reg_midi,
+    input  wire  [7:0] reg_exp2,
 
     // What the OSD currently asks for.
     input  wire  [1:0] osd_speed,        // 0=4.77  1=7.16  2=9.54  3=Max
@@ -36,6 +37,12 @@ module xtegactl_resolve (
     input  wire        osd_joy_sync,
     input  wire        osd_joy_swap,
     input  wire        osd_mt32_gm,
+    // Tandy sound has no menu option to defer to - it is a build-time choice -
+    // so this is what the build says, and zero means "whatever the build says"
+    // rather than "whatever the menu says".  The distinction only shows when
+    // the chip is compiled out: the field then cannot switch on hardware that
+    // is not there, which is also enforced at the chip select itself.
+    input  wire        build_tandy,
 
     // What the machine should actually run on.
     output wire  [1:0] eff_speed,
@@ -51,7 +58,8 @@ module xtegactl_resolve (
     output wire        eff_joy2_disable,
     output wire        eff_joy_sync,
     output wire        eff_joy_swap,
-    output wire        eff_mt32_gm
+    output wire        eff_mt32_gm,
+    output wire        eff_tandy
 );
 
     // Named so the resolution below reads as the table in the header rather
@@ -68,6 +76,7 @@ module xtegactl_resolve (
     wire [1:0] f_swap    = reg_inp[5:4];
     wire [1:0] f_sync    = reg_inp[7:6];
     wire [1:0] f_mt32    = reg_midi[1:0];
+    wire [1:0] f_tandy   = reg_exp2[1:0];
 
     // Speed is the one field wider than two bits, because it picks between
     // four choices rather than three.  Values above Max are not choices, so
@@ -85,6 +94,7 @@ module xtegactl_resolve (
     assign eff_joy_swap= (f_swap    == 2'd0) ? osd_joy_swap : (f_swap  == 2'd2);
     assign eff_joy_sync= (f_sync    == 2'd0) ? osd_joy_sync : (f_sync  == 2'd2);
     assign eff_mt32_gm = (f_mt32    == 2'd0) ? osd_mt32_gm  : (f_mt32  == 2'd2);
+    assign eff_tandy   = (f_tandy   == 2'd0) ? build_tandy  : (f_tandy == 2'd1);
 
     // Analog, Digital and Disabled are one menu option but two signals: the
     // core carries the stick type and the disable separately.
