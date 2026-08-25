@@ -71,6 +71,12 @@ for stem in $(printf '%s\n' "${!SOURCES[@]}" | sort); do
     fi
 
     log=$BUILD_DIR/$stem.log
+
+    # Every write below appends, and the pass/fail verdict greps the whole
+    # file. Without this truncation a run that once failed keeps reporting
+    # that failure from cache long after the bench was fixed.
+    : > "$log"
+
     start=$(date +%s)
 
     if [ "$stem" = cpu_8086_timing_tb ]; then

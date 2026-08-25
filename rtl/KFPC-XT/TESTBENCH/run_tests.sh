@@ -90,6 +90,12 @@ for stem in $(printf '%s\n' "${!SOURCES[@]}" | sort); do
     }
 
     log=$BUILD_DIR/$stem.log
+
+    # Every write below appends, and the pass/fail verdict greps the whole
+    # file. Without this truncation a run that once failed keeps reporting
+    # that failure from cache long after the bench was fixed.
+    : > "$log"
+
     start=$(date +%s)
 
     # Built without -DIVERILOG unless -w is given: the vendored benches guard
