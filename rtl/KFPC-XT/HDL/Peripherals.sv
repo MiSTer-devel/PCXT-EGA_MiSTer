@@ -1078,9 +1078,9 @@ end
     // qualifier; at the PC/AT 3.5MHz setting the pulse is barely as long as the
     // qualifier needs and writes were lost by clock phase. The stretcher posts
     // each write with a guaranteed minimum width instead. Address latching for
-    // reads and the write-only data latch (see the note that used to live here:
-    // on a read internal_data_bus carries the card's own reply, so data must
-    // never latch under the read strobe) are preserved inside it.
+    // reads and the write-only data latch are preserved inside it: on a read
+    // internal_data_bus carries the card's own reply, so data must never latch
+    // under the read strobe.
     ega_io_stretch u_ega_io_stretch (
         .clock                  (clock),
         .reset                  (reset),

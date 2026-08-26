@@ -129,13 +129,12 @@ module RAM (
     //
     // Two entries, because one is not enough to survive real code.
     //
-    // Every read that is allowed to park overwrites the entry, and an
-    // instruction fetch is a memory read like any other. With a single entry,
-    // the byte parked by a data read is gone before the next data read asks for
-    // it, because the BIU refilled its queue in between. That leaves the latch
-    // working only where the bus does one thing at a time - inside a REP string
-    // operation, or a straight run of fetch - and doing nothing at all in code
-    // that interleaves the two, which is most code.
+    // Every read that is allowed to park overwrites an entry, and an
+    // instruction fetch is a memory read like any other. With a single entry
+    // the byte parked by a data read is gone before the next data read asks
+    // for it, because the BIU refilled its queue in between - so the latch
+    // only helped where the bus does one thing at a time, and did nothing in
+    // code that interleaves fetch with data, which is most code.
     //
     // Two entries with round-robin replacement need no help from the BIU to
     // tell code from data. The two streams alternate on the bus by themselves,
@@ -685,9 +684,9 @@ module RAM (
     // silently dropping it (docs/max-speed-stability.md, RC2), so there the
     // bet does not hold and the handshake has to be real.
     //
-    // Charging the closed loop to every setting is what made this core 20%
-    // slower than the CGA core on every memory cycle at 4.77MHz while I/O
-    // cycles matched to within 0.03%.
+    // Charging the closed loop to every setting made this core 20% slower than
+    // the parent core on every memory cycle at 4.77MHz, while the I/O cycles
+    // matched to within 0.03%.
     wire    strict_ready = (clk_select == 2'b11);
 
     always_ff @(posedge clock, posedge reset) begin
