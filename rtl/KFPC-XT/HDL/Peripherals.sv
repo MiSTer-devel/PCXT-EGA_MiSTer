@@ -102,6 +102,7 @@ module PERIPHERALS #(
         input   logic   [1:0]   opl2_io,
         // Sound Blaster Pro
         input   logic           sb_en,
+        input   logic           sb_irq7,
         output  logic   [15:0]  sb_snd_l,
         output  logic   [15:0]  sb_snd_r,
         output  logic           sb_dma_req,
@@ -123,6 +124,7 @@ module PERIPHERALS #(
         input   logic           clk_midi,
         input   logic           midi_rx,
         output  logic           midi_tx,
+        input   logic           mpu401_enabled,
         // EMS
         input   logic           ems_enabled,
         input   logic   [1:0]   ems_address,
@@ -160,6 +162,10 @@ module PERIPHERALS #(
         output  logic   [7:0]   xtegactl_exp2,
         output  logic   [7:0]   xtegactl_crt,
         output  logic   [7:0]   xtegactl_sync,
+        // Read-only effective XTEGACTL status, supplied by the top level
+        // where the OSD values are available.
+        input   logic   [39:0]  xtegactl_status_effective,
+        input   logic   [17:0]  xtegactl_status_osd_match,
         // Others
         output  logic           pause_core,
         input   logic           video_scandoubler_en,
@@ -318,7 +324,7 @@ module PERIPHERALS #(
     // This select is qualified by iorq_uart, which pulses on the *trailing* edge
     // of io_write_n - by then iorq has already dropped, so including it would
     // gate away every write.
-    wire    mpu401_chip_select      = `ENABLE_MIDI ? (~address_enable_n && address[15:1] == (16'h0330 >> 1)) : 1'b0; // 0x330 .. 0x331 (MPU-401 UART mode)
+    wire    mpu401_chip_select      = (`ENABLE_MIDI && mpu401_enabled) ? (~address_enable_n && address[15:1] == (16'h0330 >> 1)) : 1'b0; // 0x330 .. 0x331 (MPU-401 UART mode)
     wire    lpt_chip_select         = (iorq && ~address_enable_n && address[15:1] == (16'h0378 >> 1)); // 0x378 ... 0x379
 	 wire    lpt_ctrl_select         = (iorq && ~address_enable_n && address[15:0] == 16'h037A); // 0x37A
     // The old XTCTL port lived at 8888h. It is retired: see xtegactl.sv for
@@ -429,9 +435,9 @@ module PERIPHERALS #(
         //.slave_program_or_enable_buffer     (),
         .interrupt_acknowledge_n    (interrupt_acknowledge_n),
         .interrupt_to_cpu           (interrupt_to_cpu_buf),
-        .interrupt_request          ({interrupt_request[7] | sb_interrupt,
+        .interrupt_request          ({interrupt_request[7] | (sb_interrupt & sb_irq7),
                                         fdd_interrupt,
-                                        interrupt_request[5],
+                                        interrupt_request[5] | (sb_interrupt & ~sb_irq7),
                                         uart_interrupt,
                                         uart2_interrupt,
                                         mpu_interrupt,
@@ -679,9 +685,10 @@ module PERIPHERALS #(
     //
     // Sound Blaster Pro
     //
-    // 220h, DMA channel 1, IRQ 7 - all three fixed, as they are on a card
-    // whose jumpers nobody moved. The DSP, mixer and DMA bridge all live
-    // inside soundblaster.sv; what is left out here is only the wiring.
+    // 220h and DMA channel 1 are fixed. IRQ 5 or 7 is selected by the OSD or
+    // XTEGACTL, matching the two standard Sound Blaster jumper positions.
+    // The DSP, mixer and DMA bridge all live inside soundblaster.sv; what is
+    // left out here is only the wiring.
     //
     // sb_en arrives already exclusive with cms_en: xtegactl_resolve drops
     // the C/MS whenever this is set, because the two collide on 226h/227h.
@@ -875,7 +882,12 @@ end
             keybord_interrupt       <= keybord_interrupt_ff;
             uart_interrupt_ff       <= uart_irq;
             uart_interrupt          <= uart_interrupt_ff;
-            mpu_interrupt_ff        <= mpu_irq;
+            // mpu401_inst's rx_ready tracks the underlying UART core, which
+            // keeps receiving on midi_rx regardless of the chip select above,
+            // so gate the interrupt here too - otherwise a byte arriving from
+            // a still-connected mt32-pi/USB MIDI link could raise IRQ9 for a
+            // card that is supposed to look unplugged.
+            mpu_interrupt_ff        <= mpu_irq & mpu401_enabled;
             mpu_interrupt           <= mpu_interrupt_ff;
             uart2_interrupt_ff      <= uart2_irq;
             uart2_interrupt         <= uart2_interrupt_ff;
@@ -1147,7 +1159,9 @@ end
         .reg_midi         (xtegactl_midi),
         .reg_exp2         (xtegactl_exp2),
         .reg_crt          (xtegactl_crt),
-        .reg_sync         (xtegactl_sync)
+        .reg_sync         (xtegactl_sync),
+        .status_effective (xtegactl_status_effective),
+        .status_osd_match (xtegactl_status_osd_match)
     );
 
     always_ff @(posedge clock)

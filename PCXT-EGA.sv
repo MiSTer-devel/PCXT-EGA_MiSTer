@@ -76,13 +76,13 @@ module emu
     // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
     // XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXXXXXXXXX.....XXXX
     //
-    // Bits 55-59 are the only ones left, and they exist because the VSync
-    // and HSync width options gave up six between them: those are left on
-    // Auto in practice, and a program that needs otherwise now sets them
-    // through XTEGACTL 8988h instead. Bit 54 of that six went to Swap
-    // Joysticks, which had lent bit 28 to the 220h audio selector.
+    // The first 64 status bits are fully allocated. The extended status
+    // vector continues at bit 64; its first six bits carry the VSync and
+    // HSync width options and bit 70 carries the Sound Blaster IRQ choice,
+    // so those settings remain available to the OSD and are also persisted
+    // by the normal core CFG file.
     //
-    // Spend the rest carefully. Anything already reachable through XTEGACTL
+    // Spend the extended status bits carefully. Anything already reachable through XTEGACTL
     // is a candidate to give its bit back the same way - Sync Joy to CPU
     // Speed, Fake 286 FLAGS and MT32-pi Mode are each one more bit, and the
     // CRT H and V offsets another seven, all without losing the setting.
@@ -108,9 +108,15 @@ module emu
         (`ENABLE_SB)                ? "P2OT,Sound Blaster,Enabled,Disabled;"          :
         (`ENABLE_CMS)               ? "P2OT,C/MS Audio,Enabled,Disabled;"             : "";
     localparam CONF_STR_OPL2 = (`ENABLE_OPL2 ? "P2oAB,OPL2,Adlib 388h,SB FM 388h/228h, Disabled;" : "");
+    localparam CONF_STR_TANDY = (`ENABLE_TANDY_AUDIO ? "P2oN,Tandy Sound,Disabled,Enabled;" : "");
     localparam CONF_STR_EMS = (`ENABLE_EMS ? "P3O5,2MB EMS D000-DFFF,Enabled,Disabled;P3-;" : "");
     localparam CONF_STR_UMB = (`ENABLE_UMB ? "P3OC,UMB C400-CFFF,Enabled,Disabled;P3-;" : "");
-    localparam CONF_STR_MIDI = (`ENABLE_MIDI ? "P3O6,USER I/O,MIDI,COM2;P3-;h3P4,MT32-pi;h3P4-;h3P4OD,Use MT32-pi,Yes,No;h3P4-;h3P4o9,MT32-pi Mode,MT-32,General MIDI;h3P4O34,MT32-pi ROM,MT-32 v1,MT-32 v2,CM-32L,Reserved;h3P4oSU,MT32-pi SoundFont,#0,#1,#2,#3,#4,#5,#6,#7;h3P4-;h3P4r8,Reset Hanging Notes;h3P4-;" : "");
+    // MPU-401 comes first in this block: it is the master switch the other
+    // two settings depend on - USER I/O routing and the whole MT32-pi page
+    // are moot once the card itself is off the bus, same as a real MPU-401
+    // being physically removed. A game that probes 330h then falls through
+    // to Adlib/OPL2 instead of finding a Roland device with nothing behind it.
+    localparam CONF_STR_MIDI = (`ENABLE_MIDI ? "P3oO,MPU-401,Enabled,Disabled;P3-;P3O6,USER I/O,MIDI,COM2;P3-;h3P4,MT32-pi;h3P4-;h3P4OD,Use MT32-pi,Yes,No;h3P4-;h3P4o9,MT32-pi Mode,MT-32,General MIDI;h3P4O34,MT32-pi ROM,MT-32 v1,MT-32 v2,CM-32L,Reserved;h3P4oSU,MT32-pi SoundFont,#0,#1,#2,#3,#4,#5,#6,#7;h3P4-;h3P4r8,Reset Hanging Notes;h3P4-;" : "");
 
     // Menumask bits 4 and 5 mark a missing PCXT or EGA BIOS.  The machine is
     // held in reset until both are present, so say so at the top of the menu
@@ -164,12 +170,15 @@ module emu
 		"P2-;",
 		CONF_STR_A220,
 		CONF_STR_OPL2,
+		CONF_STR_TANDY,
 		"P2o01,Speaker Volume,1,2,3,4;",
 		"P2o45,Audio Boost,No,2x,4x;",
 		"P2o67,Stereo Mix,none,25%,50%,100%;",
 		"P2-;",
 		"P2oEH,CRT H offset,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15;",
 		"P2oIK,CRT V offset,0,1,2,3,4,5,6,7;",        
+        "P2O[66:64],VSync Width,Auto,1,2,3,4,5,6,7;",
+        "P2O[69:67],HSync Width,Auto,1,2,3,4,5,6,7;",
         "P2-;",
 		"P2O12,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%;",
 		"P2O89,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
@@ -187,6 +196,7 @@ module emu
 		"P3OPQ,Joystick 2, Analog, Digital, Disabled;",
 		"P3OR,Sync Joy to CPU Speed,No,Yes;",
 		"P3oM,Swap Joysticks,No,Yes;",
+		(`ENABLE_SB ? "P3O[70],Sound Blaster IRQ,5,7;" : ""),
 		"P3-;",
 		CONF_STR_MIDI,
 		"-;",
@@ -207,7 +217,7 @@ module emu
     wire [11:0] ega_active_dots;
     wire [9:0]  ega_active_lines;
     wire [1:0] buttons;
-    wire [63:0] status;
+    wire [127:0] status;
     // Native restores the original 31.4 kHz / 70 Hz Mode 13h raster. 60Hz is
     // the CRT-TV-compatible 15.7 kHz timing previously exposed as "On".
     wire [1:0] vga_mode13_profile_osd = status[11:10];
@@ -234,17 +244,20 @@ module emu
     // behaves exactly as the menu says.
     wire [7:0]  xtegactl_cpu, xtegactl_exp, xtegactl_vid, xtegactl_inp, xtegactl_midi, xtegactl_exp2;
     wire [7:0]  xtegactl_crt, xtegactl_sync;
+    wire [39:0] xtegactl_status_effective;
+    wire [17:0] xtegactl_status_osd_match;
     wire [1:0]  eff_speed;
     wire        eff_fake286;
     wire [1:0]  eff_opl2;
     wire        eff_cms, eff_ems, eff_umb, eff_vga13;
     wire        eff_sb;
+    wire  [2:0] eff_sb_irq;
     wire [3:0]  eff_crt_h;
     wire [2:0]  eff_crt_v;
     wire [2:0]  eff_vsync_w, eff_hsync_w;
     wire        eff_joy1_digital, eff_joy1_disable;
     wire        eff_joy2_digital, eff_joy2_disable;
-    wire        eff_joy_sync, eff_joy_swap, eff_mt32_gm, eff_tandy;
+    wire        eff_joy_sync, eff_joy_swap, eff_mt32_gm, eff_tandy, eff_mpu401;
 
     // Audio at 220h. With both cards built this is one three-way field in
     // status[29:28]: 0 = C/MS, 1 = Sound Blaster, 2 = neither. With only one
@@ -260,6 +273,8 @@ module emu
     wire       a220_sb        = `ENABLE_SB
                              ? (a220_three_way ? (a220_sel == 2'd1) : ~status[29])
                              : 1'b0;
+    wire [2:0] sb_irq_osd     = status[70] ? 3'd7 : 3'd5;
+    wire       sb_irq7        = (eff_sb_irq == 3'd7);
 
     xtegactl_resolve xtegactl_apply (
         .reg_cpu          (xtegactl_cpu),
@@ -273,11 +288,14 @@ module emu
         .osd_opl2         (status[43:42]),
         .osd_cms          (a220_cms),
         .osd_sb           (a220_sb),
+        .osd_sb_irq       (sb_irq_osd),
         .build_sb         (`ENABLE_SB ? 1'b1 : 1'b0),
         .reg_crt          (xtegactl_crt),
         .reg_sync         (xtegactl_sync),
         .osd_crt_h        (status[49:46]),
         .osd_crt_v        (status[52:50]),
+        .osd_vsync_w      (status[66:64]),
+        .osd_hsync_w      (status[69:67]),
         .osd_ems          (~status[5]),
         .osd_umb          (~status[12]),
         .osd_vga13        (vga_mode13_osd),
@@ -288,12 +306,15 @@ module emu
         .osd_joy_sync     (status[27]),
         .osd_joy_swap     (status[54]),
         .osd_mt32_gm      (status[41]),
+        .osd_tandy        (status[55]),
+        .osd_mpu401       (~status[56]),
         .build_tandy      (`ENABLE_TANDY_AUDIO ? 1'b1 : 1'b0),
         .eff_speed        (eff_speed),
         .eff_fake286      (eff_fake286),
         .eff_opl2         (eff_opl2),
         .eff_cms          (eff_cms),
         .eff_sb           (eff_sb),
+        .eff_sb_irq       (eff_sb_irq),
         .eff_ems          (eff_ems),
         .eff_umb          (eff_umb),
         .eff_vga13        (eff_vga13),
@@ -305,10 +326,13 @@ module emu
         .eff_joy_swap     (eff_joy_swap),
         .eff_mt32_gm      (eff_mt32_gm),
         .eff_tandy        (eff_tandy),
+        .eff_mpu401       (eff_mpu401),
         .eff_crt_h        (eff_crt_h),
         .eff_crt_v        (eff_crt_v),
         .eff_vsync_w      (eff_vsync_w),
-        .eff_hsync_w      (eff_hsync_w)
+        .eff_hsync_w      (eff_hsync_w),
+        .status_effective (xtegactl_status_effective),
+        .status_osd_match (xtegactl_status_osd_match)
     );
 
     wire [7:0]  uart_mode;
@@ -346,19 +370,22 @@ module emu
     wire [1:0] scale = status[2:1];
     wire [2:0] screen_mode = status[16:14];
     wire [1:0] ar = status[9:8];
-    // Sync widths have no menu entry: Auto is what they are left on, and a
-    // program that needs otherwise sets XTEGACTL 8988h. Zero is Auto and
-    // zero is the register's reset value, so the core still starts in Auto.
+    // A zero XTEGACTL field defers to the OSD; a non-zero value is a
+    // per-program override. The OSD fields live in the first six extended
+    // status bits, beyond the legacy 64-bit map.
     wire [2:0] vsync_width_osd = eff_vsync_w;
     wire [2:0] hsync_width_osd = eff_hsync_w;
 
     reg [1:0]   scale_video_ff;
     reg [2:0]   screen_mode_video_ff;
     wire        video_scandoubler_en = (scale_video_ff > 0) || forced_scandoubler;
-    // bits 2:0 have no h0/h1/h2 entries in CONF_STR; bit3 exposes MT32-pi;
-    // bits 5:4 reveal the two "halted, no BIOS" lines at the top of the menu.
+    // bits 2:0 have no h0/h1/h2 entries in CONF_STR; bit3 exposes MT32-pi -
+    // gated on the MPU-401 itself being enabled as well as mt32-pi being
+    // detected, since a disabled MPU-401 leaves nothing for the page to
+    // configure; bits 5:4 reveal the two "halted, no BIOS" lines at the top
+    // of the menu.
     wire [15:0] status_menumask = {10'd0, bios_missing_ega, bios_missing_pcxt,
-                                   (`ENABLE_MIDI & mt32_available), 3'b111};
+                                   (`ENABLE_MIDI & mt32_available & eff_mpu401), 3'b111};
 
     wire VGA_VBlank_border;
     wire std_hsyncwidth;
@@ -1126,6 +1153,7 @@ module emu
     wire ems_enabled_sel = `ENABLE_EMS ? eff_ems : 1'b0;
     wire [1:0] ems_address_sel = 2'b01; // Fixed D000 page frame avoids EGA and XT-IDE ROM conflicts.
     wire umb_enabled_sel = `ENABLE_UMB ? eff_umb : 1'b0;
+    wire mpu401_enabled_sel = `ENABLE_MIDI ? eff_mpu401 : 1'b0;
 
     always @(posedge clk_chipset)
     begin
@@ -1225,6 +1253,7 @@ module emu
 		.tandy_en                           (eff_tandy),
 		.opl2_io                            (eff_opl2),
 		.sb_en                              (eff_sb),
+		.sb_irq7                            (sb_irq7),
 		.sb_snd_l                           (sb_snd_l),
 		.sb_snd_r                           (sb_snd_r),
 		.cms_en                             (eff_cms),
@@ -1241,6 +1270,7 @@ module emu
 		.clk_midi                           (clk_midi_en),
 		.midi_rx                            (midi_rx),
 		.midi_tx                            (midi_tx),
+		.mpu401_enabled                     (mpu401_enabled_sel),
 		.enable_sdram                       (1'b1),
 		.initilized_sdram                   (initilized_sdram),
 		.sdram_clock                        (SDRAM_CLK),
@@ -1282,6 +1312,8 @@ module emu
 		.xtegactl_exp2                      (xtegactl_exp2),
 		.xtegactl_crt                       (xtegactl_crt),
 		.xtegactl_sync                      (xtegactl_sync),
+		.xtegactl_status_effective          (xtegactl_status_effective),
+		.xtegactl_status_osd_match          (xtegactl_status_osd_match),
 		.wait_count_clk_en                  (cpu_ce_negedge),
 		.ram_read_wait_cycle                (ram_read_wait_cycle),
 		.ram_write_wait_cycle               (ram_write_wait_cycle),
@@ -1650,8 +1682,14 @@ module emu
 
     wire signed [16:0] mt32_i2s_l_ext = {mt32_i2s_l[15], mt32_i2s_l};
     wire signed [16:0] mt32_i2s_r_ext = {mt32_i2s_r[15], mt32_i2s_r};
-    wire [16:0] mt32_l_snd = mt32_use ? mt32_i2s_l_ext : 17'd0;
-    wire [16:0] mt32_r_snd = mt32_use ? mt32_i2s_r_ext : 17'd0;
+    // Give MT32-pi some headroom before it is summed with the core audio.
+    // Keep the samples signed while applying a resource-free -6 dB shift.
+    wire signed [16:0] mt32_i2s_l_attenuated =
+        {mt32_i2s_l_ext[16], mt32_i2s_l_ext[16:1]};
+    wire signed [16:0] mt32_i2s_r_attenuated =
+        {mt32_i2s_r_ext[16], mt32_i2s_r_ext[16:1]};
+    wire [16:0] mt32_l_snd = mt32_use ? mt32_i2s_l_attenuated : 17'd0;
+    wire [16:0] mt32_r_snd = mt32_use ? mt32_i2s_r_attenuated : 17'd0;
 
     //
     ///////////////////////   MMC     ///////////////////////

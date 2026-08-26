@@ -162,6 +162,7 @@ module CHIPSET_tm();
     wire   [7:0]    xtegactl_crt;
     wire   [7:0]    xtegactl_sync;
     logic           sb_en;
+    logic           sb_irq7 = 1'b0;
     wire   [15:0]   sb_snd_l;
     wire   [15:0]   sb_snd_r;
     logic           cms_en;
@@ -771,4 +772,3 @@ module CHIPSET_tm();
 `endif
     end
 endmodule
-

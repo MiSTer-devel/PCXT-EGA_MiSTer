@@ -50,7 +50,7 @@ For an architectural overview and possible future improvements, see the
 * EGA BIOS option ROM support (required — the card is initialised by its own ROM, as on real hardware)
 * Optional EMS memory up to 2 MiB, with a fixed D000h-DFFFh page frame
 * XTIDE support
-* Audio: AdLib, C/MS, Tandy 1000 (SN76489) and PC speaker
+* Audio: AdLib, C/MS, Sound Blaster Pro (IRQ 5/7), Tandy 1000 (SN76489) and PC speaker
 * Joystick support and serial mouse on COM1 (for example CTMOUSE 1.9, in `hdd/`)
 * Second SD card support
 * EGA graphical boot splash
@@ -95,6 +95,47 @@ whole. When it is disabled, `D0000h–DFFFFh` is unmapped; when enabled, each of
 its four 16 KiB banks responds only after its corresponding EMS page register
 has been mapped.
 
+## DOS environment (CONFIG.SYS / AUTOEXEC.BAT)
+
+`hdd/` ships a working reference setup, matched to this core's fixed I/O
+addresses and default OSD settings, so a DOS install built from scratch does
+not have to guess at any of it. `hdd/CONFIG.SYS`:
+
+```
+FILES=40
+BUFFERS = 30
+DOS = HIGH, UMB
+DEVICE=C:\UTIL\USE!UMBS.SYS C400-D000
+DEVICE=C:\UTIL\DOSMAX\DOSMAX.EXE /R+ /N+ /P-
+DEVICEHIGH=C:\UTIL\LTEMM.EXE /p:D000 /x /n
+SHELL=C:\UTIL\DOSMAX\SHELLMAX.COM C:\COMMAND.COM C:\ /E:256 /P
+```
+
+* `USE!UMBS.SYS C400-D000` registers exactly the 48 KiB UMB block described
+  above, stopping at the EMS page frame rather than reaching into it.
+* `DOSMAX.EXE` (`hdd/DOSMAX/`) moves DOS's own FILES/BUFFERS/COMMAND.COM
+  overhead into that UMB instead of conventional memory; `SHELLMAX.COM` on the
+  `SHELL=` line is its companion for COMMAND.COM. See `hdd/DOSMAX/DOSMAX.DOC`
+  for the switches.
+* `LTEMM.EXE` (`hdd/LTEMM-r01/`) is the Lo-tech EMS 4.0 driver. `/p:D000`
+  matches the OSD's fixed EMS page frame, and it needs no `/i:` switch because
+  the core's EMS I/O port, `260h`, is already LTEMM's own default.
+
+Nothing loads a mouse driver automatically — add an `AUTOEXEC.BAT` alongside
+it for that, for example:
+
+```
+@ECHO OFF
+PATH C:\UTIL
+C:\UTIL\CTMOUSE\CTMOUSE.EXE
+```
+
+`CTMOUSE.EXE` (CuteMouse 1.9, `hdd/CTMOUSE/`) checks PS/2 first, then every COM
+port, and settles on Mouse Systems mode at the first COM port if nothing
+answers — so a serial mouse on COM1 is picked up with no switches at all. See
+`hdd/CTMOUSE/CTMOUSE.TXT` for forcing a specific port, IRQ or three-button
+mode.
+
 ## Video
 
 EGA is the active video hardware model, and it is what the machine reports to
@@ -123,17 +164,15 @@ the BIOS starts after it.
 
 ### CRT output
 
-The core drives a 15 kHz CRT directly, with no scaler in between. The
-scandoubler is permanently off, so the 200-line EGA and CGA-compatible modes
-reach the display undoubled at 15.7 kHz, the way the original hardware drove
-one. VGA 13h+ with its `60Hz` setting is retimed onto that same raster; its
-`Native` setting retains the original 31.4 kHz / 70 Hz VGA timing.
+The core drives a 15 kHz CRT directly, with no scaler in between. The 200-line
+EGA and CGA-compatible modes reach the display at 15.7 kHz, the way the
+original hardware drove one. VGA 13h+ with its `60Hz` setting is retimed onto
+that same raster; its `Native` setting retains the original 31.4 kHz / 70 Hz
+VGA timing.
 
-`forced_scandoubler=1` therefore does nothing here, in any mode. It is not
-being ignored by mistake: doubling the 200-line modes would put them at about
-31 kHz, which is exactly what a television cannot lock to, so the scandoubler
-is disabled in the RTL rather than left to surprise anyone. See
-[31 kHz monitors](#31-khz-monitors) for what to use instead.
+The `CRT 25%` and `CRT 50%` visual effects darken alternate scanlines. They
+do not change the output timing or frequency. See [31 kHz monitors](#31-khz-monitors)
+for output suitable for a 31 kHz display.
 
 *Audio & Video → CRT H offset* and *CRT V offset* centre the picture. One pair
 of values covers every mode that reaches a television. HDMI is unaffected by
@@ -358,14 +397,22 @@ XTEGACTL reset
 ```
 
 It can set the CPU speed, Fake 286 FLAGS, the OPL2 address (or turn it off),
-C/MS, EMS, UMB, VGA 13h+, Tandy sound, both joysticks (analog, digital or
-disabled), the joystick swap and CPU-speed sync, and the MT32-pi mode. Taking
-the Tandy chip away matters more than it sounds: a game that probes `0C0h`,
-finds one and switches to its Tandy music driver may not be the one you
-wanted. Anything you do not
+C/MS, Sound Blaster and its IRQ (5 or 7), EMS, UMB, VGA 13h+, Tandy sound,
+the MPU-401, both joysticks (analog,
+digital or disabled), the joystick swap and CPU-speed sync, and the MT32-pi
+mode. Taking a device off the bus matters more than it sounds: a game that
+probes `0C0h` and finds a Tandy, or `330h` and finds an MPU-401, may switch to
+that device's music driver instead of the one you actually wanted — `notandy`
+and `nompu` take them away for that program without disturbing anything else.
+Anything you do not
 name is left to the OSD, and settings are not cumulative — each run rewrites
 them all, so nothing leaks from one program into the next. `XTEGACTL reset`
 hands everything back to the menu.
+
+`XTEGACTL status` now prints the effective value of every runtime setting. A
+value is followed by `(OSD)` when it matches the live menu setting, so a
+launcher can inspect the machine without opening the OSD. VGA 13h+ remains an
+actual `on`/`off` report because its enable state belongs to `VGATSR.COM`.
 
 Everything it can change applies immediately; nothing in it needs a machine
 reset. Options the core only samples during reset — CPU Type, Monitor and
@@ -379,6 +426,14 @@ names never matched the speeds they picked. See
 [`docs/xtegactl.md`](docs/xtegactl.md) for the register map and the reasoning,
 and [`SW/XTEGACTL/README.txt`](SW/XTEGACTL/README.txt) for the full option
 list.
+
+## Sound Blaster Pro
+
+The optional Sound Blaster Pro is mapped at `220h`, uses DMA channel 1, and
+raises its interrupt on IRQ5 by default. *Hardware → Sound Blaster IRQ* in the
+OSD selects IRQ5 or IRQ7. A launcher can make the same per-program choice with
+`XTEGACTL sbirq=5` or `XTEGACTL sbirq=7`; omitting that option follows the OSD.
+The card and C/MS remain mutually exclusive at `220h` when both are built.
 
 ## Tandy 1000 sound
 

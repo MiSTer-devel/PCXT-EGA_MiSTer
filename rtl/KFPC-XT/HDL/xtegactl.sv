@@ -19,21 +19,27 @@
 //   8982h  R/W expansion  [1:0] OPL2  [3:2] CMS  [5:4] EMS  [7:6] UMB
 //   8983h  R/W video      [1:0] VGA 13h+
 //   8984h  R/W input      [1:0] joy 1  [3:2] joy 2  [5:4] swap  [7:6] joy sync
-//   8985h  R/W MIDI       [1:0] MT32-pi mode
+//   8985h  R/W MIDI       [1:0] MT32-pi mode  [3:2] MPU-401
 //   8986h  R/W expansion 2 [1:0] Tandy sound  [3:2] Sound Blaster
+//                         [5:4] Sound Blaster IRQ (0=OSD, 1=IRQ5, 2=IRQ7)
 //   8987h  R/W CRT offset [3:0] H offset  [6:4] V offset  [7] override
-//   8988h  R/W sync width [2:0] VSync  [5:3] HSync   (0 = Auto)
-//   8989h..898Fh          reserved, read as zero
+//   8988h  R/W sync width [2:0] VSync  [5:3] HSync   (0 = OSD)
+//   8989h  R   effective CPU/audio status
+//   898Ah  R   effective memory/video/input status
+//   898Bh  R   effective input/MIDI/audio status ([7:6] = 10b marker)
+//   898Ch  R   effective CRT position
+//   898Dh  R   effective sync widths ([7:6] = OSD-match flags)
+//   898Eh  R   OSD-match flags [7:0]
+//   898Fh  R   OSD-match flags [15:8]
 //
 // The CRT offsets keep the menu's convention of deferring to the OSD, but
 // they cannot do it the way every other field does. Elsewhere a zero field
 // means "leave it to the OSD"; here zero is a real offset, so bit 7 of
 // 8987h says whether the register is speaking at all.
 //
-// The sync widths need no such bit, because they no longer have a menu
-// entry to defer to - this register is their only source. Zero means Auto
-// there, and zero is what the register holds out of reset, so a core that
-// nobody has written to starts in Auto exactly as it always did.
+// The sync widths use the same zero-as-defer rule as the other fields: zero
+// follows the OSD and a non-zero value is a per-program override. The OSD
+// fields live in the first six extended status bits beyond the legacy map.
 //
 // Why 8980h and not next to the old 8888h port: the motherboard chip select
 // decoder ignores address[15:10] entirely - it qualifies on ~address[9] &
@@ -46,8 +52,12 @@
 // channels, floppy included.  Bit 8 of 8980h is set, so the on-board decoder
 // never fires anywhere in this block and all sixteen ports are usable.
 //
-// The whole block is decoded, reserved ports included, so a read of one comes
-// back as a defined zero instead of whatever the bus was left holding.
+// The status extension is read-only. Its five effective bytes deliberately
+// use the same compact menu ordering as the DOS status output, while the
+// match flags say whether each value equals the current OSD value. The VGA
+// 13h+ bit has no match flag because that extension is controlled by VGATSR,
+// not by an OSD enable setting. The high two bits of 898Bh identify the
+// extension so a newer tool can fall back cleanly on an older core.
 
 `default_nettype none
 
@@ -74,7 +84,11 @@ module xtegactl #(
     output reg   [7:0] reg_midi = 8'h00,
     output reg   [7:0] reg_exp2 = 8'h00,
     output reg   [7:0] reg_crt  = 8'h00,
-    output reg   [7:0] reg_sync = 8'h00
+    output reg   [7:0] reg_sync = 8'h00,
+
+    // Read-only effective configuration for XTEGACTL status.
+    input  wire  [39:0] status_effective,
+    input  wire  [17:0] status_osd_match
 );
 
     localparam [11:0] BLOCK = 12'h898;
@@ -120,6 +134,15 @@ module xtegactl #(
             4'h6:    read_mux = reg_exp2;
             4'h7:    read_mux = reg_crt;
             4'h8:    read_mux = reg_sync;
+            4'h9:    read_mux = status_effective[7:0];
+            4'hA:    read_mux = status_effective[15:8];
+            // The marker is outside the six useful bits in this byte.
+            4'hB:    read_mux = {2'b10, status_effective[21:16]};
+            4'hC:    read_mux = status_effective[31:24];
+            // Match flags 16 and 17 share the two spare high bits here.
+            4'hD:    read_mux = {status_osd_match[17:16], status_effective[37:32]};
+            4'hE:    read_mux = status_osd_match[7:0];
+            4'hF:    read_mux = status_osd_match[15:8];
             default: read_mux = 8'h00;
         endcase
     end

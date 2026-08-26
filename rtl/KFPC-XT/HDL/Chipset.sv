@@ -120,6 +120,7 @@ module CHIPSET #(
         input   logic   [1:0]   opl2_io,
         // C/MS Audio
         input   logic           sb_en,
+        input   logic           sb_irq7,
         output  logic   [15:0]  sb_snd_l,
         output  logic   [15:0]  sb_snd_r,
         input   logic           cms_en,
@@ -138,6 +139,7 @@ module CHIPSET #(
         input   logic           clk_midi,
         input   logic           midi_rx,
         output  logic           midi_tx,
+        input   logic           mpu401_enabled,
         // SDRAM
         input   logic           enable_sdram,
         output  logic           initilized_sdram,
@@ -186,6 +188,10 @@ module CHIPSET #(
         output  logic   [7:0]   xtegactl_exp2,
         output  logic   [7:0]   xtegactl_crt,
         output  logic   [7:0]   xtegactl_sync,
+        // Read-only effective XTEGACTL status, supplied by the top level
+        // where the OSD values are available.
+        input   logic   [39:0]  xtegactl_status_effective,
+        input   logic   [17:0]  xtegactl_status_osd_match,
         // RAM wait mode
         input   logic           wait_count_clk_en,
         input   logic   [1:0]   ram_read_wait_cycle,
@@ -431,6 +437,7 @@ module CHIPSET #(
         .tandy_en                           (tandy_en),
         .opl2_io                            (opl2_io),
         .sb_en                              (sb_en),
+        .sb_irq7                            (sb_irq7),
         .sb_snd_l                           (sb_snd_l),
         .sb_snd_r                           (sb_snd_r),
         .sb_dma_req                         (sb_dma_req),
@@ -448,6 +455,7 @@ module CHIPSET #(
         .clk_midi                          (clk_midi),
         .midi_rx                           (midi_rx),
         .midi_tx                           (midi_tx),
+        .mpu401_enabled                    (mpu401_enabled),
         .ems_enabled                       (ems_enabled),
         .ems_address                       (ems_address),
         .map_ems                           (map_ems),
@@ -481,6 +489,8 @@ module CHIPSET #(
         .xtegactl_exp2                      (xtegactl_exp2),
         .xtegactl_crt                       (xtegactl_crt),
         .xtegactl_sync                      (xtegactl_sync),
+        .xtegactl_status_effective          (xtegactl_status_effective),
+        .xtegactl_status_osd_match          (xtegactl_status_osd_match),
         .pause_core                         (pause_core),
         .video_scandoubler_en                  (video_scandoubler_en),
         .ega_dot_toggle                     (ega_dot_toggle),
