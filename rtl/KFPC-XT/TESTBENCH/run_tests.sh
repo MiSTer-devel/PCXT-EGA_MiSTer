@@ -53,6 +53,8 @@ mkdir -p "$BUILD_DIR"
 declare -A SOURCES=(
     [bios_hold_notice_tb]="HDL/bios_hold_notice.sv"
     [reset_pending_notice_tb]="HDL/reset_pending_notice.sv"
+    [keyboard_warm_reset_tb]="HDL/keyboard_warm_reset.sv"
+    [warm_boot_marker_detector_tb]="HDL/warm_boot_marker_detector.sv"
     [xtegactl_tb]="HDL/xtegactl.sv HDL/xtegactl_resolve.sv"
     [splash_f12_pause_tb]="HDL/splash_f12_pause.sv"
     [ega_bios_loaded_latch_tb]="HDL/ega_bios_loaded_latch.sv HDL/rom_presence_latch.sv"

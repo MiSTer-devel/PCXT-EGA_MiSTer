@@ -67,6 +67,7 @@ module PERIPHERALS #(
         input   logic           memory_read_n,
         input   logic           memory_write_n,
         input   logic           address_enable_n,
+        input   logic           warm_boot_marker_event,
         output  logic           video_memory_access_ready,
         output  logic           video_io_access_ready,
         // Peripherals
@@ -183,6 +184,7 @@ module PERIPHERALS #(
         input   logic           vga_mode13_native,
         input   logic   [1:0]   ega_monitor_profile,
         output  logic           vga_mode13_active_out,
+        output  logic           vga_mode13_wide_clock_out,
         output  logic           vga_mode13_pixel_toggle_out,
         input   logic   [3:0]   crt_h_offset,
         input   logic   [2:0]   crt_v_offset,
@@ -543,12 +545,8 @@ module PERIPHERALS #(
     logic           prev_ps2_reset;
     logic           prev_ps2_reset_n;
     logic           lock_recv_clock;
-    localparam [15:0] OPL_WARM_RESET_HOLD = 16'd5000;
-    logic           prev_keybord_irq;
-    logic           ctrl_down;
-    logic           alt_down;
-    logic   [15:0]  opl_reset_cnt;
-    wire            opl_warm_reset = `ENABLE_OPL2 ? (opl_reset_cnt != 16'd0) : 1'b0;
+    localparam [15:0] KEYBOARD_WARM_RESET_HOLD = 16'd5000;
+    wire            keyboard_warm_reset_active;
 
     wire    clear_keycode = port_b_out[7];
     wire    ps2_reset_n   = port_b_out[6];
@@ -581,43 +579,15 @@ module PERIPHERALS #(
 
     assign  keycode = ps2_reset_n ? keycode_buf : 8'h80;
 
-    always_ff @(posedge clock, posedge reset)
-    begin
-        if (reset)
-        begin
-            prev_keybord_irq <= 1'b0;
-            ctrl_down        <= 1'b0;
-            alt_down         <= 1'b0;
-            opl_reset_cnt    <= 16'd0;
-        end
-        else if (`ENABLE_OPL2)
-        begin
-            prev_keybord_irq <= keybord_irq;
-            if (opl_reset_cnt != 16'd0)
-                opl_reset_cnt <= opl_reset_cnt - 16'd1;
-
-            if (keybord_irq && ~prev_keybord_irq)
-            begin
-                case (keycode)
-                    8'h1D: ctrl_down <= 1'b1;
-                    8'h9D: ctrl_down <= 1'b0;
-                    8'h38: alt_down  <= 1'b1;
-                    8'hB8: alt_down  <= 1'b0;
-                    default: ;
-                endcase
-
-                if (keycode == 8'h53 && ctrl_down && alt_down)
-                    opl_reset_cnt <= OPL_WARM_RESET_HOLD;
-            end
-        end
-        else
-        begin
-            prev_keybord_irq <= 1'b0;
-            ctrl_down        <= 1'b0;
-            alt_down         <= 1'b0;
-            opl_reset_cnt    <= 16'd0;
-        end
-    end
+    keyboard_warm_reset #(
+        .HOLD_CYCLES(KEYBOARD_WARM_RESET_HOLD)
+    ) keyboard_warm_reset_detect (
+        .clock             (clock),
+        .reset             (reset),
+        .keycode_irq       (keybord_irq),
+        .keycode           (keycode),
+        .warm_reset_active (keyboard_warm_reset_active)
+    );
 
     // Keyboard reset
     KFPS2KB_Send_Data u_KFPS2KB_Send_Data 
@@ -669,7 +639,7 @@ module PERIPHERALS #(
 
     jtopl2 jtopl2_inst
     (
-        .rst(reset | opl_warm_reset),
+        .rst(reset | (`ENABLE_OPL2 && keyboard_warm_reset_active)),
         .clk(clock),
         .cen(clk_en_opl2),
         .din(internal_data_bus),
@@ -1145,6 +1115,7 @@ end
     xtegactl xtegactl_ports (
         .clock            (clock),
         .reset            (reset),
+        .clear_vga13      (warm_boot_marker_event),
         .address          (address[15:0]),
         .address_enable_n (address_enable_n),
         .io_read_n        (io_read_n),
@@ -1395,6 +1366,7 @@ end
         .vga_mode13_clear          (1'b0),
         .vga_mode13_active_out     (vga_mode13_active_video),
         .vga_unchained256_active_out(),
+        .vga_mode13_wide_clock_out (vga_mode13_wide_clock_out),
         .vga_planar_memory_active_out(vga_planar_memory_active_video),
         .vga_mode13_pixel_toggle_out(vga_mode13_pixel_toggle_out),
         .crt_h_offset               (crt_h_offset),

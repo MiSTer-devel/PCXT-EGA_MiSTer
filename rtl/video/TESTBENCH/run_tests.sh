@@ -43,7 +43,7 @@ mkdir -p "$BUILD_DIR"
 # ega_io_stretch and the BRAM frontend live in the chipset tree; three benches
 # need them. video_monochrome_converter is left out on purpose: it assigns whole
 # arrays, which Icarus 12 cannot elaborate, and ega_top does not need it.
-SOURCES=(UM6845R.v ega_*.v vga_*.v video_scandoubler.v
+SOURCES=(UM6845R.v ega_*.v vga_*.v video_scandoubler.v video_source_switch.v
          ../KFPC-XT/HDL/ega_io_stretch.sv ../KFPC-XT/HDL/ega_vram_bram_frontend.sv)
 
 # The credits overlay is not part of the EGA path and stubs its own RAMs, so it

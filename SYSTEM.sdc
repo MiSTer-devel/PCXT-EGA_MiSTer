@@ -9,6 +9,7 @@ set CLOCK_CHIP      {emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[1].outpu
 set CLOCK_VIDEO_BASE   {emu|pll_system_inst|pll_system_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk}
 set CLOCK_VIDEO_X2   {emu|pll_system_inst|pll_system_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk}
 set CLOCK_VIDEO_OUT_PS {emu|pll_system_inst|pll_system_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk}
+set CLOCK_VIDEO_VGA  {emu|pll_system_inst|pll_system_inst|altera_pll_i|general[3].gpll~PLL_OUTPUT_COUNTER|divclk}
 set CLOCK_HDMI      {pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk}
 set CLOCK_H2F       {sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk}
 # Derived clocks (from PLL video domain)
@@ -29,6 +30,8 @@ set_false_path -from [get_clocks $CLOCK_CHIP] -to [get_clocks $CLOCK_VIDEO_X2]
 set_false_path -from [get_clocks $CLOCK_VIDEO_X2] -to [get_clocks $CLOCK_CHIP]
 set_false_path -from [get_clocks $CLOCK_CHIP] -to [get_clocks $CLOCK_VIDEO_OUT_PS]
 set_false_path -from [get_clocks $CLOCK_VIDEO_OUT_PS] -to [get_clocks $CLOCK_CHIP]
+set_false_path -from [get_clocks $CLOCK_CHIP] -to [get_clocks $CLOCK_VIDEO_VGA]
+set_false_path -from [get_clocks $CLOCK_VIDEO_VGA] -to [get_clocks $CLOCK_CHIP]
 set_false_path -from [get_clocks $CLOCK_CHIP] -to [get_clocks clk_14_318]
 set_false_path -from [get_clocks clk_14_318] -to [get_clocks $CLOCK_CHIP]
 
@@ -38,6 +41,8 @@ set_false_path -from [get_clocks $CLOCK_CORE] -to [get_clocks $CLOCK_VIDEO_X2]
 set_false_path -from [get_clocks $CLOCK_VIDEO_X2] -to [get_clocks $CLOCK_CORE]
 set_false_path -from [get_clocks $CLOCK_CORE] -to [get_clocks $CLOCK_VIDEO_OUT_PS]
 set_false_path -from [get_clocks $CLOCK_VIDEO_OUT_PS] -to [get_clocks $CLOCK_CORE]
+set_false_path -from [get_clocks $CLOCK_CORE] -to [get_clocks $CLOCK_VIDEO_VGA]
+set_false_path -from [get_clocks $CLOCK_VIDEO_VGA] -to [get_clocks $CLOCK_CORE]
 set_false_path -from [get_clocks $CLOCK_CORE] -to [get_clocks clk_14_318]
 set_false_path -from [get_clocks clk_14_318] -to [get_clocks $CLOCK_CORE]
 
@@ -53,6 +58,7 @@ set_false_path -from [get_clocks $CLOCK_HDMI] -to [get_clocks VCLK_SDIO]
 
 # Explicit retime constraints for the final HDMI output stage.
 set_max_delay -from [get_clocks $CLOCK_VIDEO_BASE]   -to [get_clocks $CLOCK_VIDEO_OUT_PS] 17.500
+set_max_delay -from [get_clocks $CLOCK_VIDEO_VGA]    -to [get_clocks $CLOCK_VIDEO_OUT_PS] 17.500
 
 # VIDEO
 # NOTE: If the system clock and video clock are synchronous, the following description is not necessary.

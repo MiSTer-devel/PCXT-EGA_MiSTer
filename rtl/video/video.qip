@@ -17,6 +17,7 @@ set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) vga_a00
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) vga_mode13_address.v ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) vga_dac.v ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) vga_dac_io.v ]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) vga_video_clock_mux.v ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) vga_mode13_timing.v ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) vga_mode13_renderer.v ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) vga_unchained256_ctrl.v ]
@@ -27,3 +28,4 @@ set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) v
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) ega_fb_capture.v ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) ega_ddr_arbiter.v ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) ega_fb_readout.v ]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) video_source_switch.v ]

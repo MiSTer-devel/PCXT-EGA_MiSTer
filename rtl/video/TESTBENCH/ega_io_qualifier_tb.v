@@ -85,6 +85,7 @@ module ega_io_qualifier_tb;
     wire [5:0] video_red;
     wire [5:0] video_green;
     wire [5:0] video_blue;
+    reg        vga_enabled = 1'b1;
 
     reg [7:0] planar_plane0 = 8'h00;
     reg [7:0] planar_plane1 = 8'h00;
@@ -186,7 +187,7 @@ module ega_io_qualifier_tb;
         .scandouble_en             (1'b0),
         .ega_enabled               (1'b1),
         .ega_monitor_profile       (2'b00),
-        .vga_enabled               (1'b1),
+        .vga_enabled               (vga_enabled),
         .vga_mode13_native         (1'b0),
         .vga_mode13_set            (1'b0),
         .vga_mode13_clear          (1'b0),
@@ -440,6 +441,7 @@ module ega_io_qualifier_tb;
 
     task automatic run_transient_tests;
         reg [7:0] misc_before;
+        reg [7:0] probe;
         begin
             // Misc Output must survive a one-clock 0x3C2 landing during a
             // write to the attribute controller: bit 2 is the dot clock and
@@ -469,6 +471,20 @@ module ega_io_qualifier_tb;
                    vga_mode13_active_out, 1'b1);
             check1("packed mode13 uses packed framebuffer memory",
                    vga_planar_memory_active_out, 1'b0);
+
+            // Ctrl+Alt+Del clears XTEGACTL's VGA enable. The private raster
+            // must then release the connector even though software did not
+            // write the usual 3CD exit value.
+            vga_enabled = 1'b0;
+            clks(2);
+            check1("disabling VGA13 releases the private raster",
+                   vga_mode13_active_out, 1'b0);
+            io_read(15'h03CD, probe);
+            check8("disabled VGA13 reports unavailable", probe, 8'h00);
+            vga_enabled = 1'b1;
+            clks(2);
+            io_write(15'h03CD, 8'h13);
+
             io_write(15'h03CD, 8'h0D);
             check1("VGA planar mode0D owns the private raster",
                    vga_mode13_active_out, 1'b1);

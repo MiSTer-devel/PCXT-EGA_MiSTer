@@ -15,6 +15,9 @@ org 100h
 ; the private VGA route and chain to the IBM EGA ROM.
 
 %define INT10_VECTOR      10h
+%define XTEGACTL_SIGNATURE 8980h
+%define XTEGACTL_VIDEO     8983h
+%define XTEGACTL_ID        'E'
 %define VGA_CTRL_PORT    03CDh
 %define VGA_FB_SEG       0A000h
 %define VGA_DAC_READ      03C7h
@@ -39,19 +42,18 @@ start:
     push cs
     pop ds
 
-    ; Refuse to install when the OSD has VGA 13h+ switched off. The hook
-    ; below answers "VGA present" to INT 10h AH=1Ah, and on a machine that will
-    ; never render mode 13h that answer sends games down a path which leaves the
-    ; screen black. The core reports 13h on the control port when it is enabled.
-    mov dx, VGA_CTRL_PORT
-    in al, dx
-    cmp al, 13h
-    je .install
-    mov dx, msg_disabled
-    mov ah, 09h
-    int 21h
-    mov ax, 4C01h
-    int 21h
+    ; VGA 13h+ is intentionally absent after reset. Enable it through the
+    ; XTEGACTL video field before installing the INT 10h hook. This keeps the
+    ; OSD's Native/TV choice purely about raster timing: cycling it cannot
+    ; remove a running VGA device underneath a game.
+    call enable_vga13
+    jc .exit_error
+
+    ; Running the COM twice used to stack two INT 10h hooks. The resident
+    ; handler carries a small signature immediately after its entry jump, so a
+    ; second invocation can leave the working TSR alone.
+    call tsr_installed
+    jc .already_installed
 
 .install:
     mov ax, 3510h
@@ -72,13 +74,27 @@ start:
     mov ax, 3100h
     int 21h
 
+.already_installed:
+    mov dx, msg_tsr_installed
+    mov ah, 09h
+    int 21h
+    mov ax, 4C00h
+    int 21h
+
+.exit_error:
+    mov ax, 4C01h
+    int 21h
+
 int10_hook:
+    jmp short int10_hook_entry
+tsr_signature: db 'V13+'
+int10_hook_entry:
     cmp ah, 00h
     jne .check_get_mode
     ; Any mode set, not just a mode 13h one, is where the hardware gets asked.
     ; It happens a handful of times in a session so it can afford to be
     ; thorough, and every game does one - which is what makes it a fair point to
-    ; notice the OSD option having been toggled. Preserves AX, so the masking
+    ; notice a later XTEGACTL change. Preserves AX, so the masking
     ; and compare below are unaffected.
     call refresh_vga_cached
     ; Bit 7 of AL is the standard "do not clear video memory" flag, part of
@@ -103,9 +119,9 @@ int10_hook:
     call vga_available
     pop ax
     je .set_mode13
-    ; VGA was switched off in the OSD after we went resident. Treat the request
-    ; like any other mode set and let the video BIOS reject it, so the caller
-    ; falls back instead of drawing into a mode nothing will display.
+    ; VGA was disabled through XTEGACTL after we went resident. Treat the
+    ; request like any other mode set and let the video BIOS reject it, so the
+    ; caller falls back instead of drawing into a mode nothing will display.
     jmp .clear_and_chain
 
 .try_mode0d:
@@ -421,16 +437,17 @@ clear_framebuffer:
 ;
 ; So the port is read where it is cheap to be thorough - a mode set, a handful
 ; of times a session, in refresh_vga_cached - and every call after that reads
-; the answer out of memory. That also keeps the OSD option honest: toggling it
-; takes effect on the next mode set, and every game does one.
+; the answer out of memory. A later software write that disables XTEGACTL's
+; video field likewise takes effect on the next mode set, and every game does
+; one.
 vga_available:
     cmp byte [cs:vga_cached], 13h
     ret
 
 ; Samples the control port and stores the answer for vga_available. Called from
 ; the AH=00h path only, so it can afford eight tries where the old per-call
-; version could only afford three. A core with the option off returns 00h on
-; every one of them; a single 13h anywhere is proof the option is on.
+; version could only afford three. A disabled extension returns 00h on every
+; one of them; a single 13h anywhere is proof it is on.
 refresh_vga_cached:
     push ax
     push cx
@@ -774,11 +791,75 @@ current_mode:   db 0
 crtc_saved:     times 25 db 0
 attr_mode_saved: db 0
 attr_pan_saved:  db 0
-; Seeded at 13h because install refuses to go resident unless the port said so,
-; then refreshed on every mode set.
+; Seeded at 13h because enable_vga13 selects the extension before the TSR goes
+; resident, then refreshed on every mode set.
 vga_cached:     db 13h
 
 resident_end:
 
 ; Only reached before going resident, so keep it outside the retained block.
-msg_disabled:   db 'VGA 13h+ is disabled in the OSD; TSR not installed.', 13, 10, '$'
+; Enable XTEGACTL video field [1:0] = 2 (vga13), preserving any future upper
+; fields in the same byte. Carry returns set only when the core lacks the
+; XTEGACTL port block, which means this version of the TSR cannot control it.
+enable_vga13:
+    mov dx, XTEGACTL_SIGNATURE
+    in al, dx
+    cmp al, XTEGACTL_ID
+    jne .unsupported
+
+    mov dx, XTEGACTL_VIDEO
+    in al, dx
+    mov ah, al
+    and al, 03h
+    cmp al, 02h
+    je .already_enabled
+    and ah, 0FCh
+    or ah, 02h
+    mov al, ah
+    out dx, al
+    mov dx, msg_activated
+    jmp short .print
+.already_enabled:
+    mov dx, msg_already_active
+.print:
+    mov ah, 09h
+    int 21h
+    clc
+    ret
+.unsupported:
+    mov dx, msg_no_xtegactl
+    mov ah, 09h
+    int 21h
+    stc
+    ret
+
+; Carry set when INT 10h already points at this TSR. The signature is after a
+; two-byte short jump, so it never runs in the interrupt path.
+tsr_installed:
+    push ax
+    push bx
+    push es
+    mov ax, 3510h
+    int 21h
+    cmp byte [es:bx+2], 'V'
+    jne .not_installed
+    cmp byte [es:bx+3], '1'
+    jne .not_installed
+    cmp byte [es:bx+4], '3'
+    jne .not_installed
+    cmp byte [es:bx+5], '+'
+    jne .not_installed
+    stc
+    jmp short .done
+.not_installed:
+    clc
+.done:
+    pop es
+    pop bx
+    pop ax
+    ret
+
+msg_activated:      db 'VGA 13h+ activated.', 13, 10, '$'
+msg_already_active: db 'VGA 13h+ was already active.', 13, 10, '$'
+msg_tsr_installed:  db 'VGATSR is already installed.', 13, 10, '$'
+msg_no_xtegactl:    db 'XTEGACTL port not found; TSR not installed.', 13, 10, '$'

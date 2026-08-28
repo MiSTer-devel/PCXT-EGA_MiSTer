@@ -25,11 +25,11 @@ machine reset, there is no apply-and-reboot command, and there is no state that
 has to survive a reset. That single rule is what the whole design is arranged
 around, and it is why several otherwise plausible settings are absent.
 
-**Zero means "leave it to the OSD".** Every field encodes 0 as defer and 1..N
-as the N choices, listed in the same order the menu lists them. Three
-consequences follow: the power-on state of all zeroes is plain OSD behaviour;
-a program overrides only what it names; and a setting left behind by an earlier
-program cannot quietly capture an option nobody meant to touch.
+**Zero means "leave it to the OSD"** for every field except VGA 13h+. Those
+fields encode 1..N as the choices in the same order the menu lists them. VGA
+13h+ is deliberately different: zero is disabled after reset and `VGATSR.COM`
+owns activation. This prevents an OSD timing choice or an unrelated XTEGACTL
+profile from removing a live VGA device.
 
 ## Register map
 
@@ -65,7 +65,7 @@ match the OSD.
 | Fake 286 FLAGS | 2 | OSD | off | on | — | |
 | OPL2 | 2 | OSD | Adlib 388h | SB FM 388h/228h | disabled | |
 | CMS / EMS / UMB | 2 | OSD | enabled | disabled | — | |
-| VGA 13h+ | 2 | OSD | off | on | — | |
+| VGA 13h+ | 2 | disabled | legacy disabled | enabled (used by `VGATSR`) | reserved/disabled | |
 | Joystick 1 / 2 | 2 | OSD | analog | digital | disabled | |
 | Swap joysticks | 2 | OSD | normal | swapped | — | |
 | Joy sync to CPU | 2 | OSD | off | on | — | |
@@ -95,9 +95,16 @@ matching when its effective value equals the live OSD value, even if an
 explicit XTEGACTL override selected that same value.
 
 VGA 13h+ controls only *whether* the extension is present, not *which* timing
-profile it uses. The core already carries those as separate signals
-(`vga_mode13_osd` and `vga_mode13_native`), so the program decides whether and
-the user keeps deciding which — Native or 60 Hz — from the OSD.
+profile it uses. It starts disabled after every reset; an IBM-compatible warm
+boot also clears it when the BIOS writes the standard `1234h` marker to
+`0040:0072`. `VGATSR.COM` enables it before installing its INT 10h hook, and
+must be run again after that warm boot. The user keeps deciding the output
+timing — Native 70 Hz or TV 60 Hz — independently from the OSD.
+
+The `XTEGACTL` command-line utility therefore does not expose `vga13` or
+`novga13`: normal profiles preserve the current VGA 13h+ state. `XTEGACTL
+reset` disables the extension, and the user can run `VGATSR.COM` again to
+enable it and install the hook.
 
 Tandy sound defers to a menu option like everything else above, but whether the
 SN76489 exists at all is still a build-time choice (`ENABLE_TANDY_AUDIO` in

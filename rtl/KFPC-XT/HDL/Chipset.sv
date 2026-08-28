@@ -42,6 +42,7 @@ module CHIPSET #(
         input   logic           vga_mode13_native,
         input   logic   [1:0]   ega_monitor_profile,
         output  logic           vga_mode13_active_out,
+        output  logic           vga_mode13_wide_clock_out,
         output  logic           vga_mode13_pixel_toggle_out,
         // I/O Ports
         output  logic   [19:0]  address,
@@ -247,6 +248,12 @@ module CHIPSET #(
     logic           fdd_dma_req;
     logic           sb_dma_req;
 
+    // IBM-compatible BIOSes announce a warm reboot by writing 1234h to the
+    // BIOS Data Area at 0040:0072.  Detect that bus transaction here, where
+    // both the ordinary 8088 byte bus and the 8086 private word path are
+    // visible, before handing the event to the peripheral register file.
+    logic           warm_boot_marker_event;
+
     //
     // I/O settle guard
     //
@@ -368,6 +375,18 @@ module CHIPSET #(
         .terminal_count_n                   (terminal_count_n)
     );
 
+    warm_boot_marker_detector u_warm_boot_marker_detector (
+        .clock              (clock),
+        .reset              (reset),
+        .address            (address),
+        .address_enable_n   (address_enable_n),
+        .memory_write_n     (memory_write_n),
+        .byte_data          (internal_data_bus),
+        .word_write_request (word_write_request),
+        .word_data          (data_bus_word_in),
+        .warm_boot_event    (warm_boot_marker_event)
+    );
+
     PERIPHERALS #(.clk_rate(clk_rate)) u_PERIPHERALS 
     (
         .clock                              (clock),
@@ -406,6 +425,7 @@ module CHIPSET #(
         .memory_read_n                      (memory_read_n),
         .memory_write_n                     (memory_write_n),
         .address_enable_n                   (address_enable_n),
+        .warm_boot_marker_event             (warm_boot_marker_event),
         .video_memory_access_ready            (video_memory_access_ready),
         .video_io_access_ready              (video_io_access_ready),
         .timer_counter_out                  (timer_counter_out),
@@ -504,6 +524,7 @@ module CHIPSET #(
         .vga_mode13_native                 (vga_mode13_native),
         .ega_monitor_profile               (ega_monitor_profile),
         .vga_mode13_active_out             (vga_mode13_active_out),
+        .vga_mode13_wide_clock_out         (vga_mode13_wide_clock_out),
         .vga_mode13_pixel_toggle_out        (vga_mode13_pixel_toggle_out),
         .crt_h_offset                       (crt_h_offset),
         .crt_v_offset                       (crt_v_offset),
@@ -598,4 +619,3 @@ module CHIPSET #(
     end
 
 endmodule
-

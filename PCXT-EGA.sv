@@ -183,7 +183,7 @@ module emu
 		"P2O12,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%;",
 		"P2O89,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 		"P2OEG,Display,Full Color,Green,Amber,B&W,Red,Blue,Fuchsia,Purple;",
-		"P2OAB,VGA 13h+,Off,Native,60Hz;",
+		"P2OA,VGA 13h+ CRT,Native 70Hz,TV 60Hz;",
 		"P2o23,350-line CRT,Native,480i 15 kHz,240p 15 kHz;",
 		"P2-;",
 		"P3,Hardware;",
@@ -218,11 +218,12 @@ module emu
     wire [9:0]  ega_active_lines;
     wire [1:0] buttons;
     wire [127:0] status;
-    // Native restores the original 31.4 kHz / 70 Hz Mode 13h raster. 60Hz is
-    // the CRT-TV-compatible 15.7 kHz timing previously exposed as "On".
-    wire [1:0] vga_mode13_profile_osd = status[11:10];
-    wire       vga_mode13_osd = |vga_mode13_profile_osd;
-    wire       vga_mode13_native_osd = (vga_mode13_profile_osd == 2'b01);
+    // This setting chooses only the Mode 13h output raster.  The extension
+    // itself starts disabled and VGATSR enables it through XTEGACTL, so
+    // changing Native/TV timing can never remove a live video device.
+    // Native restores the original 31.4 kHz / 70 Hz raster; TV 60Hz is the
+    // CRT-TV-compatible 15.7 kHz profile.
+    wire       vga_mode13_native_osd = ~status[10];
     // Status bit 63 is the pending CPU selection. The value presented to the
     // BIU is latched only during reset; changing the menu alone cannot change
     // queue depth or bus width while an instruction is in flight.
@@ -298,7 +299,6 @@ module emu
         .osd_hsync_w      (status[69:67]),
         .osd_ems          (~status[5]),
         .osd_umb          (~status[12]),
-        .osd_vga13        (vga_mode13_osd),
         .osd_joy1_digital (status[23]),
         .osd_joy1_disable (status[24]),
         .osd_joy2_digital (status[25]),
@@ -481,8 +481,10 @@ module emu
 
     wire clk_100;
     wire clk_28_636;
+    wire clk_25_2;
     wire clk_57_272;
     wire clk_video_out_ps;
+    wire clk_card_video;
     reg clk_14_318 = 1'b0;
     wire clk_cpu;
     logic cpu_ce_posedge;
@@ -509,7 +511,19 @@ module emu
         .outclk_0(clk_28_636),
         .outclk_1(clk_57_272),
         .outclk_2(clk_video_out_ps),
+        .outclk_3(clk_25_2),
         .locked(pll_system_locked)
+    );
+
+    wire vga_mode13_wide_clock;
+    wire vga_native_standard_clock = vga_mode13_active_video &&
+                                     vga_mode13_native_osd &&
+                                     !vga_mode13_wide_clock;
+    vga_video_clock_mux vga_video_clock_select (
+        .clk_legacy(clk_28_636),
+        .clk_native(clk_25_2),
+        .select_native(vga_native_standard_clock),
+        .clk_video(clk_card_video)
     );
 
     wire reset_wire = RESET | status[0] | buttons[1] | !pll_locked | !pll_system_locked  | splashscreen | splash_pending;
@@ -1183,7 +1197,7 @@ module emu
 		.interrupt_to_cpu                   (interrupt_to_cpu),
 		.splashscreen                       (splashscreen),
 		.std_hsyncwidth                     (std_hsyncwidth),
-		.clk_video                        (clk_28_636),
+		.clk_video                        (clk_card_video),
 		.de_o                               (de_o),
 		.VGA_R                              (r),
 		.VGA_G                              (g),
@@ -1197,6 +1211,7 @@ module emu
 		.vga_mode13_native                 (vga_mode13_native_osd),
 		.ega_monitor_profile               (ega_monitor_profile_applied),
 		.vga_mode13_active_out             (vga_mode13_active_video),
+		.vga_mode13_wide_clock_out         (vga_mode13_wide_clock),
 		.vga_mode13_pixel_toggle_out        (vga_mode13_pixel_toggle),
 	//	.address                            (address),
 		.address_ext                        (bios_access_address),
@@ -1773,9 +1788,9 @@ module emu
 
     wire        ce_pixel_dot = ega_dot_toggle_d ^ ega_dot_toggle_dd;
 
-    // vga_mode13_active_video always drives the 15 kHz CRT TV compatible
-    // mode13h raster (rtl/video/vga_mode13_timing.v), whose real pixel rate
-    // is one flip per displayed pixel, not per clk_28_636 cycle. Same
+    // vga_mode13_active_video drives either the Native VGA or 15 kHz CRT-TV
+    // raster (rtl/video/vga_mode13_timing.v), whose real pixel rate is one
+    // flip per displayed pixel, not per video-clock cycle. Same
     // toggle-crossing idiom as ce_pixel_dot above, so the framework's
     // active-window measurement (the OSD Information line) reports the real
     // pixel count instead of the raw dot-clock count.
@@ -2031,18 +2046,22 @@ module emu
         .wr_grant()
     );
 
-    // The path only changes with both rasters blanked, so neither side is ever
-    // cut off mid-picture. The two are unrelated in phase, so a window turns up
-    // within a frame or two of the request; until then the picture carries on
-    // as it was, which is what should happen.
-    reg crt480i_active = 1'b0;
+    // Change over in the destination raster's own vertical blank. Requiring
+    // both rasters to be blank at once can stall when two roughly 60 Hz modes
+    // keep nearly the same phase, leaving both HDMI and analogue output on the
+    // old (already black) 480i path while mode 13h is ready underneath it.
+    wire crt480i_active;
 
-    always @(posedge CLK_VIDEO_PIPELINE) begin
-        if (video_retime_reset)
-            crt480i_active <= 1'b0;
-        else if (bypass_vb && fb_vb)
-            crt480i_active <= fb_enable & fb_frame_valid;
-    end
+    video_source_switch crt480i_source_switch (
+        .clock(CLK_VIDEO_PIPELINE),
+        .reset(video_retime_reset),
+        .select_alt(fb_enable & fb_frame_valid),
+        .primary_hsync(bypass_hs),
+        .primary_vblank(bypass_vb),
+        .alt_hsync(fb_hs),
+        .alt_vblank(fb_vb),
+        .alt_active(crt480i_active)
+    );
 
     wire [7:0] video_mixer_r = crt480i_active ? fb_r  : bypass_r;
     wire [7:0] video_mixer_g = crt480i_active ? fb_g  : bypass_g;

@@ -32,7 +32,6 @@ module xtegactl_resolve (
     input  wire  [2:0] osd_sb_irq,
     input  wire        osd_ems,
     input  wire        osd_umb,
-    input  wire        osd_vga13,
     input  wire        osd_joy1_digital,
     input  wire        osd_joy1_disable,
     input  wire        osd_joy2_digital,
@@ -149,7 +148,11 @@ module xtegactl_resolve (
     assign eff_cms     = cms_selected & ~eff_sb;
     assign eff_ems     = (f_ems     == 2'd0) ? osd_ems      : (f_ems   == 2'd1);
     assign eff_umb     = (f_umb     == 2'd0) ? osd_umb      : (f_umb   == 2'd1);
-    assign eff_vga13   = (f_vga13   == 2'd0) ? osd_vga13    : (f_vga13 == 2'd2);
+    // VGA 13h+ deliberately has no OSD master switch. The extension starts
+    // absent after reset and VGATSR selects value 2 (vga13) before it installs
+    // its INT 10h hook. Keep value 1 as the legacy novga13 spelling, so old
+    // launchers still explicitly disable the extension.
+    assign eff_vga13   = (f_vga13 == 2'd2);
     assign eff_joy_swap= (f_swap    == 2'd0) ? osd_joy_swap : (f_swap  == 2'd2);
     assign eff_joy_sync= (f_sync    == 2'd0) ? osd_joy_sync : (f_sync  == 2'd2);
     assign eff_mt32_gm = (f_mt32    == 2'd0) ? osd_mt32_gm  : (f_mt32  == 2'd2);

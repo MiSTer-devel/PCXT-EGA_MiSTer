@@ -93,6 +93,7 @@ module ega_top(
     input vga_mode13_clear,
     output vga_mode13_active_out,
     output vga_unchained256_active_out,
+    output vga_mode13_wide_clock_out,
     output vga_planar_memory_active_out,
     output vga_mode13_pixel_toggle_out,
     input [3:0] crt_h_offset,
@@ -1289,6 +1290,10 @@ module ega_top(
     // consumers use it to select the VGA pixel toggle and direct video path.
     assign vga_mode13_active_out = vga_private_active;
     assign vga_unchained256_active_out = vga_unchained256_active;
+    // The 360-pixel profile needs 720 active output clocks, so its Native
+    // raster retains the 28.636 MHz / 912-clock timing.
+    assign vga_mode13_wide_clock_out = vga_unchained256_active &&
+                                       (vga_unchained_profile == 2'd1);
     assign vga_planar_memory_active_out = vga_unchained256_active |
                                           vga_planar16_active;
     assign vga_mode13_pixel_toggle_out = vga_mode13_pixel_toggle;

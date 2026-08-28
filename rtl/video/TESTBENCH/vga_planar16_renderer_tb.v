@@ -72,9 +72,14 @@ module vga_planar16_renderer_tb;
         // Freeze the timing coordinates to inspect address generation without
         // waiting through complete VGA frames.
         force dut.timing.h_count = 11'd0;
-        force dut.timing.v_count = 10'd3;
+        // Native scans each 200-line source row twice, so physical lines 6
+        // and 7 both fetch source row 3.
+        force dut.timing.v_count = 10'd6;
         #1;
         check16("offset22 gives 44-byte rows", vram_addr, 16'd132);
+        force dut.timing.v_count = 10'd7;
+        #1;
+        check16("native repeats the planar source row", vram_addr, 16'd132);
 
         dut.start_address_latched = 16'h0100;
         #1;

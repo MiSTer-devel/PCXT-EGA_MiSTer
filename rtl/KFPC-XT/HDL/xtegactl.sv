@@ -17,7 +17,7 @@
 //   8980h  R   signature, 'E'
 //   8981h  R/W CPU        [2:0] speed  [4:3] fake 286 FLAGS
 //   8982h  R/W expansion  [1:0] OPL2  [3:2] CMS  [5:4] EMS  [7:6] UMB
-//   8983h  R/W video      [1:0] VGA 13h+
+//   8983h  R/W video      [1:0] VGA 13h+ (0/1 off, 2 on; warm boot clears)
 //   8984h  R/W input      [1:0] joy 1  [3:2] joy 2  [5:4] swap  [7:6] joy sync
 //   8985h  R/W MIDI       [1:0] MT32-pi mode  [3:2] MPU-401
 //   8986h  R/W expansion 2 [1:0] Tandy sound  [3:2] Sound Blaster
@@ -66,6 +66,9 @@ module xtegactl #(
 ) (
     input  wire        clock,
     input  wire        reset,
+    // A BIOS warm boot returns the machine to its native EGA hardware. Other
+    // per-program overrides remain intact, but VGATSR must be run again.
+    input  wire        clear_vga13,
 
     // Host bus
     input  wire [15:0] address,
@@ -106,6 +109,9 @@ module xtegactl #(
             reg_exp2 <= 8'h00;
             reg_crt  <= 8'h00;
             reg_sync <= 8'h00;
+        end
+        else if (clear_vga13) begin
+            reg_vid <= 8'h00;
         end
         else if (block_hit & ~io_write_n) begin
             case (address[3:0])

@@ -167,7 +167,7 @@ the BIOS starts after it.
 The core drives a 15 kHz CRT directly, with no scaler in between. The 200-line
 EGA and CGA-compatible modes reach the display at 15.7 kHz, the way the
 original hardware drove one. VGA 13h+ with its `60Hz` setting is retimed onto
-that same raster; its `Native` setting retains the original 31.4 kHz / 70 Hz
+that same raster; its `Native` setting uses the standard 31.5 kHz / 70 Hz
 VGA timing.
 
 The `CRT 25%` and `CRT 50%` visual effects darken alternate scanlines. They
@@ -203,8 +203,8 @@ put them.
 There is no native 31 kHz output for EGA, CGA or MDA modes. Their 200-line
 rasters are 15 kHz and the 350-line/MDA modes left on `Native` run at 18.4 to
 21.8 kHz on the 16.257 MHz dot clock, below what a VGA monitor will accept.
-The exception is VGA 13h+ in its `Native` profile, which uses the original
-31.4 kHz / 70 Hz VGA raster. A multisync CRT or a flat panel on the analogue
+The exception is VGA 13h+ in its `Native` profile, which uses a conventional
+31.5 kHz / 70 Hz VGA raster. A multisync CRT or a flat panel on the analogue
 port is otherwise served by the scaler, in `MiSTer.ini`:
 
 * `vga_scaler=1` — routes the scaler to the analogue output. The core's own
@@ -237,10 +237,17 @@ fixed VGA planar 16-colour profile:
 | Unchained 360×200 | Four pixels per byte across four planes | 360×200 |
 | Unchained 320×240 | Four pixels per byte across four planes | 320×240 |
 
-`Off` is the default and leaves the DAC ports undecoded, exactly as on an IBM
-EGA. `Native` selects the original VGA 31.4 kHz / 70 Hz raster. `60Hz` keeps a
-15.70 kHz / 59.9 Hz television-compatible raster without an additional PLL;
-360×200 borrows horizontal blanking and 320×240 borrows vertical blanking.
+The extension starts disabled, exactly as on an IBM EGA, and `VGATSR.COM`
+enables it through XTEGACTL. `VGA 13h+ CRT` then selects its output raster:
+`Native` uses the standard 800-clock, 31.5 kHz / 70 Hz VGA timing, while `60Hz`
+keeps a 15.70 kHz / 59.9 Hz television-compatible raster. The 360×200 Native
+profile retains a 912-clock line for its wider picture, and 320×240 borrows
+vertical blanking.
+
+An IBM-compatible warm boot clears the VGA 13h+ XTEGACTL field when the BIOS
+writes its standard `1234h` marker to `0040:0072`, so the private VGA raster
+releases the connector and the original EGA text mode is visible again.
+`VGATSR.COM` must be run again before another VGA session.
 
 With the option on, the DAC feeds **every** video mode, not only VGA 13h+. This
 matters for software that detects a VGA, switches to a 16-colour mode for
