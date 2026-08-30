@@ -53,7 +53,7 @@
 //                 -> carry[12] -> carry[15] -> ALU output mux -> eu_biu_command
 //
 //   and it is why clk_100 reached only 88 MHz against the 100 MHz it is
-//   constrained to. See docs/max-speed-stability.md, RC7.
+//   constrained to.
 //
 //   A single '+' does map to the carry chain. The intermediate carries come back
 //   out of it for one XOR each, because the full-adder sum is

@@ -320,7 +320,7 @@ module ega_io_stretch_tb;
         // 10-12 clocks is the pulse when the io_settle waits land in time;
         // 4-6 clocks, one to three T-states, is the pulse when the wait
         // arrives after the CPU has already left T3 - the arm-latency case
-        // known-issues.md measured on the memory side of the same ready path.
+        // measured on the memory side of the same ready path.
         run_pairs(100, 12, 8);
         run_pairs(100, 10, 8);
         run_pairs(100, 8, 8);

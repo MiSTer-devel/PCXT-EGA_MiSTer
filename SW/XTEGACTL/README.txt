@@ -65,6 +65,24 @@ OPTIONS
   status    print effective values and mark values matching the OSD
 
 
+SOUND BLASTER ENVIRONMENT
+-------------------------
+
+The default core setup is base 220h, IRQ5 and DMA channel 1. DOS games that
+use the conventional Creative environment should see:
+
+    SET BLASTER=A220 I5 D1 T4
+    SET SOUND=C:\SB
+    SET MIDI=SYNTH:1 MAP:E MODE:0
+
+BLASTER describes the hardware; it does not enable it. If "sbirq=7" or the
+OSD selects IRQ7, use I7 for that program too. SOUND is the directory expected
+by Creative utilities and must match their actual installation. MIDI is also
+a software convention and does not configure the core's separate MPU-401 at
+330h. The repository's hdd\AUTOEXEC.BAT and docs\dos-configuration.md contain
+complete examples.
+
+
 HOW IT BEHAVES
 --------------
 

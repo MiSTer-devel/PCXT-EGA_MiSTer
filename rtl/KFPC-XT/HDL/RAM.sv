@@ -681,7 +681,7 @@ module RAM (
     // again only at COMPLETE_RAM_RW, i.e. after the SDRAM side has actually
     // finished. At the fastest setting the write command pulse is about two
     // CPU clocks and can close before the controller has issued the write,
-    // silently dropping it (docs/max-speed-stability.md, RC2), so there the
+    // silently dropping it, so there the
     // bet does not hold and the handshake has to be real.
     //
     // Charging the closed loop to every setting made this core 20% slower than

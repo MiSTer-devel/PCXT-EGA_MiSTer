@@ -146,6 +146,15 @@ line for the current program, while omitting the option (or using
 `sbirq=auto`) follows the OSD. The override is stored in bits `[5:4]` of
 `8986h`, with `0` meaning OSD, `1` meaning IRQ5 and `2` meaning IRQ7.
 
+DOS software normally receives the same setup through
+`SET BLASTER=A220 I5 D1 T4`: base `220h`, IRQ 5, DMA channel 1 and Sound
+Blaster Pro type 4. When XTEGACTL selects IRQ 7, the environment must use `I7`
+for that program as well. `SET SOUND=C:\SB` and
+`SET MIDI=SYNTH:1 MAP:E MODE:0` are optional Creative-software conventions;
+they do not create or configure hardware. The complete startup examples live
+in [`docs/dos-configuration.md`](dos-configuration.md) and
+[`hdd/AUTOEXEC.BAT`](../hdd/AUTOEXEC.BAT).
+
 ## Screen geometry
 
 Centring a picture is per-program work rather than a property of the
@@ -209,8 +218,8 @@ while reset is asserted: CPU Type, the EGA monitor switches, and the 2nd SD
 card mapping. A program cannot usefully set them — it would have to reboot to
 make them take, and a program that reboots the machine from a batch file is
 indistinguishable from a crash. They also describe the user's machine rather
-than the program running on it. They stay in the OSD, which since
-`742555a` says so when one of them is waiting on a reset.
+than the program running on it. They stay in the OSD, which says when one of
+them is waiting on a reset.
 
 CPU Type is additionally the one setting that could not be made live even in
 principle without real surgery: `pfq_depth` is combinational in `IS8086`

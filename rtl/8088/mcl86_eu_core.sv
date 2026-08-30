@@ -487,7 +487,7 @@ module mcl86_eu_core
     // sixteen chained carry expressions are not something Quartus can put on the
     // ALM's dedicated carry hardware, so it built the chain from general logic
     // and that chain became the critical path of the whole core - the reason
-    // clk_100 closed at 88 MHz against 100 (docs/max-speed-stability.md, RC7).
+    // clk_100 closed at 88 MHz against 100.
     // mcl86_adder computes the same function bit for bit, with the intermediate
     // carries recovered from the sum instead of produced ahead of it.
     mcl86_adder u_adder (

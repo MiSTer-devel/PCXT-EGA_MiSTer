@@ -102,6 +102,23 @@
       font-size: 0.9em;
     }
 
+    pre {
+      overflow-x: auto;
+      margin: 1rem 0;
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--bg-soft);
+      line-height: 1.55;
+    }
+
+    pre code {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      font-size: 0.88rem;
+    }
+
     .progress {
       position: fixed;
       inset: 0 0 auto;
@@ -1181,7 +1198,7 @@
 
     <div class="hero-inner">
       <div>
-        <p class="hero-kicker">Technical report · EGA core with optional VGA mode 13h</p>
+        <p class="hero-kicker">Technical report · EGA core with bounded VGA 13h+</p>
         <h1>
           IBM PC/XT <span class="h1-ega"><span class="h1-ega-e">E</span><span class="h1-ega-g">G</span><span class="h1-ega-a">A</span></span>
           <span>recreated in FPGA</span>
@@ -1189,12 +1206,12 @@
         <p class="hero-lead">
           A MiSTer implementation designed to reproduce the IBM PC/XT
           ecosystem reliably, with an 8088 CPU, native EGA architecture,
-          integrated CGA compatibility and an optional VGA mode 13h extension.
+          integrated CGA compatibility and an optional VGA 13h+ extension.
         </p>
 
         <div class="hero-meta">
           <span class="hero-chip">Video: EGA</span>
-          <span class="hero-chip">VGA mode 13h: optional</span>
+          <span class="hero-chip">VGA 13h+: optional TSR extension</span>
           <span class="hero-chip">License: GPL-3.0</span>
           <span class="hero-chip">Platform: MiSTer FPGA</span>
         </div>
@@ -1203,7 +1220,7 @@
       <aside class="hero-status">
         <small>Video configuration</small>
         <strong><span class="status status-ok">EGA first</span></strong>
-        <p>CGA-compatible software runs through EGA. VGA mode 13h is available as an optional OSD feature.</p>
+        <p>CGA-compatible software runs through EGA. VGATSR enables the optional VGA 13h+ path; the OSD selects its output raster.</p>
       </aside>
     </div>
   </header>
@@ -1214,7 +1231,7 @@
       <a href="#overview"><span class="nav-index">01</span><span>Overview</span></a>
       <a href="#architecture"><span class="nav-index">02</span><span>Architecture</span></a>
       <a href="#video"><span class="nav-index">03</span><span>EGA video</span></a>
-      <a href="#vga"><span class="nav-index">04</span><span>VGA 13h</span></a>
+      <a href="#vga"><span class="nav-index">04</span><span>VGA 13h+</span></a>
       <a href="#features"><span class="nav-index">05</span><span>Features</span></a>
       <a href="#configuration"><span class="nav-index">06</span><span>Configuration</span></a>
       <a href="#startup"><span class="nav-index">07</span><span>BIOS and startup</span></a>
@@ -1244,7 +1261,7 @@
             <div class="icon">CPU</div>
             <h3>PC/XT foundation</h3>
             <p>
-              8088 CPU with multiple clock rates, compatible chipset,
+              Selectable 8088/8086 CPU with multiple clock rates, compatible chipset,
               conventional memory, UMB, EMS, BIOS, floppy drives and XTIDE.
             </p>
           </article>
@@ -1262,16 +1279,16 @@
             <div class="icon">13h</div>
             <h3>Focused VGA extension</h3>
             <p>
-              Adds 320x200 with 256 colours, a packed framebuffer and DAC,
-              without turning the core into a general VGA implementation.
+              Adds packed and selected unchained 256-colour profiles, planar
+              mode 0Dh and a DAC without becoming a general VGA implementation.
             </p>
           </article>
         </div>
 
         <div class="metric-strip">
           <div class="metric">
-            <div class="metric-value">8088</div>
-            <div class="metric-label">Main CPU recreated in logic</div>
+            <div class="metric-value">8088 / 8086</div>
+            <div class="metric-label">Selectable bus execution</div>
           </div>
           <div class="metric">
             <div class="metric-value">640 KiB</div>
@@ -1283,7 +1300,7 @@
           </div>
           <div class="metric">
             <div class="metric-value">320x200x256</div>
-            <div class="metric-label">VGA mode 13h extension</div>
+            <div class="metric-label">VGA 13h+ packed profile</div>
           </div>
         </div>
 
@@ -1293,7 +1310,7 @@
             <strong>How to read this project</strong>
             <p>
               This is an EGA-centred PC/XT core. Compatibility with CGA modes
-              does not mean that an independent CGA card exists, and mode 13h
+              does not mean that an independent CGA card exists, and VGA 13h+
               support does not imply a complete VGA implementation.
             </p>
           </div>
@@ -1320,7 +1337,7 @@
           <div>
             <strong>Video implementation reference</strong>
             <p>
-              The EGA implementation and the optional VGA mode 13h behaviour
+              The EGA implementation and the optional VGA 13h+ behaviour
               are based on the video emulation code in
               <a href="https://github.com/86box/86box" target="_blank" rel="noopener noreferrer">86Box</a>.
               It is used as a behavioural reference; the MiSTer core remains an
@@ -1335,7 +1352,7 @@
             <desc id="arch-desc">
               The MCL86 CPU communicates with the KFPC-XT chipset. The chipset
               connects memory, storage, audio, input and the EGA video subsystem
-              with its optional VGA mode 13h extension.
+              with its optional VGA 13h+ extension.
             </desc>
 
             <defs>
@@ -1349,7 +1366,7 @@
 
             <rect class="node-accent" x="45" y="205" width="180" height="105" rx="18"></rect>
             <text class="title" x="135" y="245" text-anchor="middle">CPU MCL86</text>
-            <text class="small" x="135" y="270" text-anchor="middle">8088 · 4 clock settings</text>
+            <text class="small" x="135" y="270" text-anchor="middle">8088 / 8086 · 4 clock settings</text>
             <text class="small" x="135" y="290" text-anchor="middle">PC/XT-compatible bus</text>
 
             <rect class="node" x="310" y="185" width="220" height="145" rx="18"></rect>
@@ -1369,11 +1386,11 @@
             <rect class="node-video" x="615" y="260" width="300" height="112" rx="16"></rect>
             <text class="title" x="765" y="296" text-anchor="middle">Unified video</text>
             <text class="small" x="765" y="321" text-anchor="middle">Native EGA + CGA compatibility</text>
-            <text class="small" x="765" y="342" text-anchor="middle">VGA mode 13h when enabled</text>
+            <text class="small" x="765" y="342" text-anchor="middle">VGA 13h+ enabled by VGATSR</text>
 
             <rect class="node" x="615" y="399" width="300" height="88" rx="16"></rect>
             <text class="title" x="765" y="434" text-anchor="middle">Audio and input</text>
-            <text class="small" x="765" y="458" text-anchor="middle">OPL2 · C/MS · speaker · mouse · joystick</text>
+            <text class="small" x="765" y="458" text-anchor="middle">OPL2 · C/MS · SB Pro · Tandy · MIDI · input</text>
 
             <rect class="node-accent" x="310" y="430" width="220" height="92" rx="18"></rect>
             <text class="title" x="420" y="466" text-anchor="middle">MiSTer platform</text>
@@ -1454,7 +1471,7 @@
             <ul class="plain-list">
               <li><strong>MCL86</strong>, by MicroCoreLabs, as the CPU foundation.</li>
               <li><strong>KFPC-XT</strong>, by kitune-san, as the PC/XT platform foundation.</li>
-              <li><strong><a href="https://github.com/86box/86box" target="_blank" rel="noopener noreferrer">86Box</a></strong>, whose video emulation code provides the basis for the EGA implementation and optional VGA mode 13h support.</li>
+              <li><strong><a href="https://github.com/86box/86box" target="_blank" rel="noopener noreferrer">86Box</a></strong>, whose video emulation code provides the basis for the EGA implementation and optional VGA 13h+ support.</li>
               <li><strong>JTOPL</strong>, by José Tejada/jotego, for AdLib OPL2 audio.</li>
               <li>MiSTer port integration, adaptation and further development by <strong>spark2k06</strong>.</li>
             </ul>
@@ -1493,7 +1510,7 @@
             <h3>What was removed</h3>
             <ul class="plain-list">
               <li>An independent CGA card as a fallback.</li>
-              <li>Active HGC and Tandy paths in this variant.</li>
+              <li>Active HGC and Tandy video paths in this variant.</li>
               <li>OSD selection between video cards.</li>
               <li>Hidden passthrough for splash, boot or CGA games.</li>
               <li>Conditional build paths with no present purpose.</li>
@@ -1633,17 +1650,18 @@
           <div class="section-number">04</div>
           <div>
             <p class="eyebrow">Graphics extension</p>
-            <h2>VGA mode 13h, deliberately limited in scope</h2>
+            <h2>VGA 13h+, deliberately limited in scope</h2>
           </div>
         </header>
 
         <div class="mode-card">
           <div>
-            <h3>A direct and familiar mode for DOS software</h3>
+            <h3>Familiar VGA profiles for DOS software</h3>
             <p>
-              The extension implements the familiar <code>320x200x256</code>
-              mode: one byte per pixel, 64,000 visible bytes and linear access
-              from <code>A000:0000</code>.
+              The extension implements packed <code>320x200x256</code> mode 13h,
+              selected unchained 320x200, 360x200 and 320x240 profiles, and a
+              bounded planar <code>320x200x16</code> mode 0Dh profile. It adds
+              the VGA DAC while leaving normal EGA modes on the EGA path.
             </p>
             <div class="chips">
               <span class="chip">8 bpp packed</span>
@@ -1686,23 +1704,20 @@
             attribute code <code>14h</code> is brown, the EGA 200-line code
             <code>14h</code> is light red - so each of the 256 entries carries a
             validity bit. Entries software never wrote fall back to the classic
-            EGA palette, which is what keeps the option-off path unchanged by
+            EGA palette, which is what keeps the extension-off path unchanged by
             construction.
           </p>
         </div>
 
         <div class="panel">
-          <h3>Activation path</h3>
+          <h3>Activation and output timing</h3>
           <p>
-            <code>VGA Mode 13h</code> is an OSD option and defaults to Off.
-            When enabled, <code>VGATSR.COM</code> intercepts <code>INT 10h</code>
-            and drives the RTL path through control port <code>03CDh</code>. With
-            the option disabled the DAC ports do not decode at all, which is
-            correct for an EGA: a real IBM EGA has no DAC, its palette lives in
-            the attribute controller. The TSR refuses to install in that case,
-            since answering “VGA present” on a machine that will
-            never render mode 13h only sends games down a path that leaves the
-            screen black.
+            VGA 13h+ starts disabled after reset. <code>VGATSR.COM</code>
+            enables it through XTEGACTL before installing its
+            <code>INT 10h</code> hook; a warm boot clears the extension again.
+            The OSD's <em>VGA 13h+ CRT</em> choice is independent: it selects a
+            conventional Native 31.5 kHz / 70 Hz raster or the 15.7 kHz / 59.9
+            Hz TV raster, but does not activate or remove the VGA device.
           </p>
 
           <div class="table-wrap">
@@ -1716,7 +1731,7 @@
               <tbody>
                 <tr>
                   <td>Mode entry</td>
-                  <td><code>INT 10h AX=0013h</code> through the TSR, with the OSD option enabled.</td>
+                  <td><code>INT 10h AX=0013h</code> through the resident TSR.</td>
                 </tr>
                 <tr>
                   <td>Framebuffer</td>
@@ -1747,32 +1762,33 @@
         <div class="panel">
           <h3>Should it stay off for EGA-only sessions?</h3>
           <p>
-            For everyday use, leaving it on doesn't break anything: in
+            For everyday use, loading the TSR doesn't break EGA software: in
             <code>ega_top.v</code>, <code>ega_dac_hit</code> only substitutes a
             palette entry when that specific DAC index was actually written by
             software (<code>vga_dac_sample_valid</code>), so an EGA game that
             never writes <code>3C7h</code>–<code>3C9h</code> looks
-            identical with the option on or off, and
+            identical with the extension enabled or disabled, and
             <code>VGATSR.COM</code> chains every unrecognised
             <code>INT 10h</code> call straight through to the real BIOS.
           </p>
           <p>
-            But the option exists for a reason, and turning it off is the
+            But the bounded activation exists for a reason, and not loading
+            the TSR is the
             right call when the goal is a machine that behaves and is detected
             as a real EGA with no VGA trace at all — which is why the
-            ports are gated on the option in the first place rather than left
+            ports are gated on the extension state rather than left
             decoding permanently:
           </p>
           <ul class="plain-list">
             <li>
-              <strong>Port-level fingerprint.</strong> With the option on,
+              <strong>Port-level fingerprint.</strong> With the extension enabled,
               ports <code>3C7h</code>–<code>3C9h</code> answer as a DAC
               even when no software ever calls the BIOS for one — a real
               IBM EGA doesn't decode those ports at all, its palette lives in
               the attribute controller. Software that fingerprints hardware by
               probing I/O ports directly, rather than through
               <code>INT 10h</code>, can see that and conclude a VGA is
-              present. Turning the option off closes those ports, so the card
+              present. Leaving the extension disabled closes those ports, so the card
               answers exactly as an EGA should to a port probe as much as to a
               BIOS call.
             </li>
@@ -1787,7 +1803,7 @@
             </li>
           </ul>
           <p>
-            So: fine to leave on for normal play, but turn it off when the
+            So: fine to load VGATSR for normal play, but omit it when the
             goal is specifically authentic, untraceable EGA behaviour —
             testing against real hardware, for example, or running EGA-only
             software with nothing else in the picture.
@@ -1799,9 +1815,10 @@
           <div>
             <strong>This is not a complete VGA</strong>
             <p>
-              It does not claim VBE/SVGA, Mode X, planar 256-colour VGA modes,
-              an independent VGA text pipeline or full compatibility with VGA
-              registers unnecessary for the mode 13h objective.
+              It does not claim VBE/SVGA, arbitrary additional Mode X profiles,
+              VGA planar modes beyond the supported mode 0Dh, an independent VGA
+              text pipeline, programmable timings or full compatibility with VGA
+              registers outside the supported profiles.
             </p>
           </div>
         </div>
@@ -1855,6 +1872,8 @@
               <li>Internal PC speaker.</li>
               <li>AdLib OPL2 through JTOPL.</li>
               <li>Creative Music System / Game Blaster.</li>
+              <li>Sound Blaster Pro at 220h, DMA 1 and selectable IRQ 5/7.</li>
+              <li>Optional Tandy SN76489 audio at 0C0h.</li>
               <li>MPU-401 MIDI at 330h, IRQ 2, for an mt32-pi or a USB MIDI interface.</li>
               <li>Volume, boost and stereo-mix controls from the OSD.</li>
             </ul>
@@ -1954,7 +1973,7 @@
             <line x1="705" y1="408" x2="999" y2="408" class="separator" />
             <text x="720" y="380" class="block-label">Video memory</text>
             <text x="720" y="399" class="detail">A0000h-BFFFFh · 128 KiB reserved for EGA / VGA</text>
-            <text x="720" y="430" class="detail">A0000h-AFFFFh · 64 KiB · EGA / VGA mode 13h</text>
+            <text x="720" y="430" class="detail">A0000h-AFFFFh · 64 KiB · EGA / VGA 13h+</text>
             <text x="720" y="451" class="detail">B0000h-BFFFFh · 64 KiB · selectable EGA apertures</text>
 
             <text x="685" y="97" text-anchor="end" class="address">FFFFFh</text>
@@ -1991,7 +2010,7 @@
             </thead>
             <tbody>
               <tr><td><code>00000h-9FFFFh</code></td><td>640 KiB</td><td>Conventional SDRAM</td><td>Conventional memory</td></tr>
-              <tr><td><code>A0000h-AFFFFh</code></td><td>64 KiB</td><td>EGA aperture and VGA mode 13h framebuffer</td><td>Reserved for video</td></tr>
+              <tr><td><code>A0000h-AFFFFh</code></td><td>64 KiB</td><td>EGA aperture and VGA 13h+ framebuffer</td><td>Reserved for video</td></tr>
               <tr><td><code>B0000h-B7FFFh</code></td><td>32 KiB</td><td>Selectable EGA monochrome aperture</td><td>Reserved for video</td></tr>
               <tr><td><code>B8000h-BFFFFh</code></td><td>32 KiB</td><td>Selectable EGA colour/text aperture</td><td>Reserved for video</td></tr>
               <tr><td><code>C0000h-C3FFFh</code></td><td>16 KiB</td><td>EGA option ROM</td><td>Reserved for EGA BIOS</td></tr>
@@ -2010,7 +2029,7 @@
           EGA can select an <code>A0000h-BFFFFh</code>, <code>A0000h-AFFFFh</code>,
           <code>B0000h-B7FFFh</code> or <code>B8000h-BFFFFh</code> aperture through
           its graphics controller. The whole A/B region is therefore reserved for
-          video, regardless of the current EGA map. VGA mode 13h owns
+          video, regardless of the current EGA map. VGA 13h+ owns
           <code>A0000h-AFFFFh</code> while active.
         </p>
         <p>
@@ -2085,7 +2104,7 @@
 
         <div class="panel">
           <h3>Features enabled in <code>config.tcl</code></h3>
-          <div class="chips"><span class="chip">ENABLE_OPL2</span><span class="chip">ENABLE_CMS</span><span class="chip">ENABLE_EMS</span><span class="chip">ENABLE_UMB</span></div>
+          <div class="chips"><span class="chip">ENABLE_OPL2</span><span class="chip">ENABLE_CMS</span><span class="chip">ENABLE_SB</span><span class="chip">ENABLE_TANDY_AUDIO</span><span class="chip">ENABLE_MIDI</span><span class="chip">ENABLE_EMS</span><span class="chip">ENABLE_UMB</span></div>
 
           <div class="table-wrap" style="margin-top: 22px">
             <table>
@@ -2110,15 +2129,42 @@
                 </tr>
                 <tr>
                   <td>Audio and video</td>
-                  <td>C/MS, OPL2, speaker, mixing, CRT offsets, timing, effects, aspect ratio and VGA Mode 13h.</td>
+                  <td>Audio 220h (C/MS, Sound Blaster or disabled), OPL2, Tandy, speaker, mixing, CRT offsets, sync widths, effects, aspect ratio and the VGA 13h+ raster.</td>
                 </tr>
                 <tr>
                   <td>Hardware</td>
-                  <td>2 MiB EMS at D000h-DFFFh, UMB at C400h-CFFFh, two joysticks and synchronisation options.</td>
+                  <td>2 MiB EMS at D000h-DFFFh, UMB at C400h-CFFFh, Sound Blaster IRQ 5/7, MPU-401, two joysticks and synchronisation options.</td>
                 </tr>
               </tbody>
             </table>
           </div>
+        </div>
+
+        <div class="split" style="margin-top: 22px">
+          <div class="panel">
+            <h3>DOS startup reference</h3>
+            <p><code>hdd/CONFIG.SYS</code> registers the core's real windows: the 48 KiB UMB at C400h-CFFFh and the four-bank EMS frame at D000h-DFFFh.</p>
+            <pre><code>DEVICE=C:\UTIL\USE!UMBS.SYS C400-D000
+DEVICE=C:\UTIL\DOSMAX\DOSMAX.EXE /R+ /N+ /P-
+DEVICEHIGH=C:\UTIL\LTEMM.EXE /p:D000 /x /n</code></pre>
+            <p>The driver's D000 upper bound is exclusive, so it stops before EMS. E000h-EBFFh remains outside the DOS UMB chain.</p>
+          </div>
+          <div class="panel">
+            <h3>Sound Blaster environment</h3>
+            <pre><code>SET BLASTER=A220 I5 D1 T4
+SET SOUND=C:\SB
+SET MIDI=SYNTH:1 MAP:E MODE:0</code></pre>
+            <p>IRQ 5 is the default. If the OSD or XTEGACTL selects IRQ 7, DOS software must use <code>I7</code> too. The repository includes complete <code>CONFIG.SYS</code> and <code>AUTOEXEC.BAT</code> examples under <code>hdd/</code>.</p>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top: 22px">
+          <h3>Core-specific MiSTer.ini example for 31 kHz analogue output</h3>
+          <pre><code>[PCXT-EGA]
+vga_scaler=1
+video_mode=6
+vsync_adjust=2</code></pre>
+          <p>The section applies only to this core. Mode 6 is MiSTer's built-in 640x480 preset; use <code>vsync_adjust=1</code> if a flat panel rejects the core-following refresh, and leave <code>vga_scaler</code> disabled for direct 15 kHz output.</p>
         </div>
       </section>
 
@@ -2152,7 +2198,7 @@
               <li>Open PCXT31 and Micro8088 BIOS options with integrated XTIDE.</li>
               <li>Additional XTIDE of up to 16 KiB at EC00h.</li>
               <li>Floppy compatibility depends on the BIOS in use.</li>
-              <li>Current VGA mode 13h support requires the TSR to be loaded from DOS.</li>
+              <li>VGA 13h+ requires <code>hdd/VGATSR.COM</code> to be loaded from DOS.</li>
             </ul>
           </div>
         </div>
@@ -2207,8 +2253,8 @@
             <strong>Compatibility first, not feature expansion</strong>
             <p>
               This roadmap is about making the existing EGA model more faithful.
-              It does not imply a move towards VGA, VBE, SVGA or additional video
-              adapters.
+              It does not imply a move towards a complete VGA, VBE, SVGA or
+              additional video adapters.
             </p>
           </div>
         </div>
@@ -2230,7 +2276,7 @@
               <li>Recreate a reliable PC/XT on MiSTer.</li>
               <li>Keep EGA as the sole owner of normal video.</li>
               <li>Run compatible CGA software through EGA.</li>
-              <li>Offer a packed mode 13h for common DOS software.</li>
+              <li>Offer bounded VGA 13h+ profiles for selected DOS software.</li>
               <li>Keep the architecture understandable and verifiable.</li>
             </ul>
           </div>
@@ -2238,10 +2284,10 @@
           <div class="panel">
             <h3>Outside the current goal</h3>
             <ul class="plain-list">
-              <li>Active HGC or Tandy hardware in this variant.</li>
+              <li>Active HGC or Tandy video hardware in this variant.</li>
               <li>Dynamic switching between video cards.</li>
               <li>General VGA or SVGA compatibility.</li>
-              <li>VBE, Mode X and undocumented VGA extensions.</li>
+              <li>VBE/SVGA, arbitrary additional Mode X profiles and undocumented VGA extensions.</li>
               <li>Guaranteed compatibility with every BIOS or game.</li>
             </ul>
           </div>
@@ -2253,9 +2299,10 @@
             <strong>Technical direction</strong>
             <p>
               The distinctive value is reducing legacy paths without losing the
-              historical software that a real EGA can run. VGA mode 13h is added
-              as a bounded extension: it takes ownership of the display only in
-              mode 13h, and outside it contributes only the DAC.
+              historical software that a real EGA can run. VGA 13h+ is added as a
+              bounded extension: it takes ownership of the display only in its
+              supported packed, unchained and planar profiles; outside them it
+              contributes only the DAC.
             </p>
           </div>
         </div>
@@ -2281,7 +2328,7 @@
             The 8088 CPU comes from the <strong>MCL86</strong> project by
             MicroCoreLabs, in the rewrite contributed by <strong>Boogermann</strong>,
             and the chipset from <strong>KFPC-XT</strong> by kitune-san. The EGA
-            and VGA mode 13h behaviour is modelled on the video emulation in
+            and VGA 13h+ behaviour is modelled on the video emulation in
             <strong>86Box</strong>. AdLib sound uses <strong>JTOPL</strong> by
             Jose Tejada, and the MIDI path reuses the <strong>mt32-pi</strong>
             bridge by Sorgelig and Kitrinx that ships with the MiSTer framework.
@@ -2305,7 +2352,7 @@
   <footer>
     <div class="footer-inner">
       <span>PCXT for MiSTer FPGA · Technical report</span>
-      <span>EGA core with optional VGA mode 13h</span>
+      <span>EGA core with optional VGA 13h+</span>
     </div>
   </footer>
 

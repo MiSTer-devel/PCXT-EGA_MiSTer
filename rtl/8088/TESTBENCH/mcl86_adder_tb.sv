@@ -6,7 +6,7 @@
 //  single '+', so that Quartus would map it onto the ALM carry chain instead of
 //  building sixteen chained LUT expressions. That chain was the critical path of
 //  the entire core and the reason clk_100 closed at 88 MHz against the 100 MHz
-//  it is constrained to (docs/max-speed-stability.md, RC7).
+//  it is constrained to.
 //
 //  The change is only safe if the two are the same function, and "the same
 //  function" here means more than the sum agreeing. The EU takes five separate

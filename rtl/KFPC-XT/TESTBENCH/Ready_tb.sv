@@ -250,7 +250,7 @@ module READY_TEST_tm();
 
         // Memory write.  This fork added the write term to bus_state so a
         // write arms the wait/ready flip-flop at the start of its cycle like
-        // everything else; see docs/max-speed-stability.md, RC2.  Nothing
+        // everything else. Nothing
         // here drove memory_write_n before, so that term went unexercised.
         memory_write_n      = 1'b0;
         address_enable_n    = 1'b1;

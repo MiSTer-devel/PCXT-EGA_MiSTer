@@ -35,8 +35,8 @@ module READY (
 
     // Memory writes must arm the wait/ready flip-flop at the start of the
     // cycle exactly like reads and I/O do. Without this term a write could
-    // be told to wait only after its command pulse has already closed
-    // (see docs/max-speed-stability.md, RC2), which is what corrupts RAM
+    // be told to wait only after its command pulse has already closed,
+    // which is what corrupts RAM
     // and floppy/IDE transfers at the fastest CPU speed setting.
     //
     // Only at that setting, though. The race needs a command pulse of about

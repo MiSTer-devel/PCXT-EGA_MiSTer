@@ -44,8 +44,8 @@ For an architectural overview and possible future improvements, see the
 * **Direct 15 kHz CRT output**, with the 350-line modes convertible to 480i or 240p from the OSD
 * **Optional VGA 13h+**: packed 320×200×256 mode 13h, selected unchained
   256-colour profiles (320×200, 360×200 and 320×240), and a bounded planar
-  320×200×16 mode 0Dh profile, with a 256-entry DAC; off by default and
-  switched from the OSD
+  320×200×16 mode 0Dh profile, with a 256-entry DAC; off by default, enabled
+  by `VGATSR.COM`, with its Native/TV output raster selected from the OSD
 * 640 KiB conventional memory plus an optional 48 KiB UMB at C400h-CFFFh
 * EGA BIOS option ROM support (required — the card is initialised by its own ROM, as on real hardware)
 * Optional EMS memory up to 2 MiB, with a fixed D000h-DFFFh page frame
@@ -126,15 +126,30 @@ it for that, for example:
 
 ```
 @ECHO OFF
-PATH C:\UTIL
+SET PATH=C:\UTIL;%PATH%
+SET BLASTER=A220 I5 D1 T4
+SET SOUND=C:\SB
+SET MIDI=SYNTH:1 MAP:E MODE:0
 C:\UTIL\CTMOUSE\CTMOUSE.EXE
 ```
+
+`BLASTER=A220 I5 D1 T4` describes the core's default Sound Blaster Pro setup:
+base address `220h`, IRQ 5, DMA channel 1 and Creative card type 4. If the OSD
+or `XTEGACTL sbirq=7` selects IRQ 7, change `I5` to `I7` for that program as
+well. `SOUND` is only the installation directory expected by Creative's own
+utilities, and `MIDI` is likewise a software convention; neither variable
+enables hardware in the core.
 
 `CTMOUSE.EXE` (CuteMouse 1.9, `hdd/CTMOUSE/`) checks PS/2 first, then every COM
 port, and settles on Mouse Systems mode at the first COM port if nothing
 answers — so a serial mouse on COM1 is picked up with no switches at all. See
 `hdd/CTMOUSE/CTMOUSE.TXT` for forcing a specific port, IRQ or three-button
 mode.
+
+The repository keeps both examples as [`hdd/CONFIG.SYS`](hdd/CONFIG.SYS) and
+[`hdd/AUTOEXEC.BAT`](hdd/AUTOEXEC.BAT). See
+[`docs/dos-configuration.md`](docs/dos-configuration.md) for the matching OSD
+settings, the exact UMB/EMS windows and per-game Sound Blaster examples.
 
 ## Video
 
@@ -205,18 +220,25 @@ rasters are 15 kHz and the 350-line/MDA modes left on `Native` run at 18.4 to
 21.8 kHz on the 16.257 MHz dot clock, below what a VGA monitor will accept.
 The exception is VGA 13h+ in its `Native` profile, which uses a conventional
 31.5 kHz / 70 Hz VGA raster. A multisync CRT or a flat panel on the analogue
-port is otherwise served by the scaler, in `MiSTer.ini`:
+port is otherwise served by the scaler. This core-specific section in
+`MiSTer.ini` is a practical starting point:
 
-* `vga_scaler=1` — routes the scaler to the analogue output. The core's own
-  15 kHz rasters are not used in this configuration.
-* `video_mode=6` — the stock 640×480 at 25.175 MHz, so 31.47 kHz. A built-in
-  preset, so there is no modeline to work out.
-* `vsync_adjust=2` — makes the output follow the core's real 59.917 Hz instead
-  of a fixed 60 Hz. The scaler then stops repeating a frame about every twelve
-  seconds, and most of its latency goes with it. This produces a non-standard
-  refresh rate, which is why the option carries warnings generally: a CRT will
-  accept it, a flat panel may not, so drop to `vsync_adjust=1` if the picture
-  is rejected.
+```ini
+[PCXT-EGA]
+vga_scaler=1
+video_mode=6
+vsync_adjust=2
+```
+
+The section name is the core name embedded in the RBF, so these settings apply
+only to PCXT-EGA and do not change other cores. `vga_scaler=1` routes the
+scaler to the analogue output, meaning the core's own 15 kHz rasters are not
+used there. `video_mode=6` is MiSTer's built-in 640×480, 25.175 MHz preset
+(31.47 kHz), so no modeline is required. `vsync_adjust=2` follows the core's
+real 59.917 Hz instead of forcing 60 Hz, avoiding a repeated frame roughly
+every twelve seconds and reducing scaler latency. That refresh is
+non-standard: a CRT will normally accept it, but a flat panel may not, so use
+`vsync_adjust=1` if the display rejects the signal.
 
 Leave *350-line CRT* on `Native` here. The 480i and 240p conversions exist to
 reach a television and have nothing to offer a monitor that can already show
@@ -224,8 +246,8 @@ reach a television and have nothing to offer a monitor that can already show
 
 ### VGA 13h+
 
-The *Audio & Video → VGA 13h+* option is a deliberately bounded VGA extension.
-It adds a 256-entry DAC on ports `3C7h`–`3C9h`, the original packed
+The optional VGA 13h+ path is a deliberately bounded VGA extension. It adds a
+256-entry DAC on ports `3C7h`–`3C9h`, the original packed
 320×200×256 mode 13h at `A000h`, selected unchained four-plane profiles and a
 fixed VGA planar 16-colour profile:
 
@@ -249,20 +271,21 @@ writes its standard `1234h` marker to `0040:0072`, so the private VGA raster
 releases the connector and the original EGA text mode is visible again.
 `VGATSR.COM` must be run again before another VGA session.
 
-With the option on, the DAC feeds **every** video mode, not only VGA 13h+. This
+While the extension is active, the DAC feeds **every** video mode, not only VGA
+13h+. This
 matters for software that detects a VGA, switches to a 16-colour mode for
 gameplay and then sets its colours through the DAC: Titus the Fox and
 Prehistorik 2 both do this, and without it they render in the stock EGA palette.
 Entries the program never wrote fall back to the EGA palette, so nothing changes
 for software that does not touch the DAC.
 
-`SW/vga/vgatsr.com` is the BIOS-side companion. The EGA option ROM has no DAC
+`hdd/VGATSR.COM` is the packaged BIOS-side companion; its source is
+`SW/vga/vgatsr.asm`. The EGA option ROM has no DAC
 subfunctions — `INT 10h AH=10h` with `AL=10h/12h/15h/17h` are VGA additions and
 an EGA BIOS drops them silently — so the TSR hooks `INT 10h` and serves them,
 along with the queries a game uses to detect a VGA in the first place. It
-refuses to install when the OSD option is off, since claiming "VGA present" on a
-machine that will never render VGA 13h+ just sends games down a path that leaves
-the screen black.
+refuses to install if the core does not expose the required XTEGACTL interface,
+so an older incompatible RBF is not falsely advertised as VGA-capable.
 
 For VGA mode 0Dh, VGATSR first lets the existing EGA BIOS establish the normal
 planar registers and BIOS state, then switches only the display fetch to the
@@ -292,22 +315,22 @@ outside this feature.
 
 #### Should it stay off for EGA-only sessions?
 
-For everyday use, leaving it on doesn't break anything: the DAC only overrides
+For everyday use, loading the TSR doesn't break anything: the DAC only overrides
 a palette entry that software has actually written, so an EGA game that never
 touches `3C7h`–`3C9h` renders identically either way, and `VGATSR.COM` chains
 every unrecognised `INT 10h` call straight through to the real BIOS.
 
-But the option exists for a reason, and turning it off is the right call when
-you want the machine to behave and be detected as a real EGA with no VGA trace
-at all — this is why the ports are gated on the option in the first place
-rather than left decoding permanently:
+But explicit activation exists for a reason, and not loading the TSR is the
+right call when you want the machine to behave and be detected as a real EGA
+with no VGA trace at all — this is why the ports are gated on the XTEGACTL
+state rather than left decoding permanently:
 
-* **Port-level fingerprint.** With the option on, ports `3C7h`–`3C9h` answer as
+* **Port-level fingerprint.** With the extension active, ports `3C7h`–`3C9h` answer as
   a DAC even if no software ever calls the BIOS for one — a real IBM EGA
   doesn't decode those ports at all, its palette lives in the attribute
   controller. Software that fingerprints hardware by probing I/O ports
   directly, rather than going through `INT 10h`, can see that and conclude a
-  VGA is present. Turning the option off closes those ports so the card
+  VGA is present. Not loading the TSR leaves those ports closed so the card
   answers exactly as an EGA should, to a port probe as much as to a BIOS call.
 * **BIOS-level fidelity.** With `VGATSR.COM` resident, `INT 10h AH=12h/BL=10h`
   ("Return EGA information") — a standard EGA call, not a VGA-only one — is
@@ -315,8 +338,8 @@ rather than left decoding permanently:
   loaded EGA BIOS ROM. Not loading the TSR means every EGA BIOS call gets
   exactly what that ROM would answer, with nothing intercepted.
 
-So: fine to leave on for normal play, but turn it off when you specifically
-want authentic, untraceable EGA behaviour — testing against real hardware, for
+So: fine to load VGATSR for normal play, but omit it when you specifically want
+authentic, untraceable EGA behaviour — testing against real hardware, for
 example, or running EGA-only software with nothing else in the picture.
 
 ## Current configuration
@@ -324,7 +347,7 @@ example, or running EGA-only software with nothing else in the picture.
 * System/ROM set to PC/XT
 * EGA video active at boot
 * CGA-compatible text and graphics behaviour through EGA
-* Optional VGA 13h+, enabled only from the OSD
+* Optional VGA 13h+, enabled by `VGATSR.COM`; Native/TV timing selected in the OSD
 * OPL2 enabled for common DOS FM audio
 * CMS enabled
 * EMS enabled for expanded memory
@@ -387,11 +410,6 @@ is the same at all four speeds.
 
 An older prebuilt RBF will not contain these source changes.
 
-See [docs/known-issues.md](docs/known-issues.md) for what remains open, and
-[docs/max-speed-stability.md](docs/max-speed-stability.md) for the analysis
-behind how the Max CPU speed setting is built — what makes it fragile,
-which parts were fixed and how, and what is still outstanding.
-
 ## XTEGACTL — per-program hardware control
 
 `XTEGACTL.COM` sets the machine up from DOS the way a program wants it, so a
@@ -404,8 +422,8 @@ XTEGACTL reset
 ```
 
 It can set the CPU speed, Fake 286 FLAGS, the OPL2 address (or turn it off),
-C/MS, Sound Blaster and its IRQ (5 or 7), EMS, UMB, VGA 13h+, Tandy sound,
-the MPU-401, both joysticks (analog,
+C/MS, Sound Blaster and its IRQ (5 or 7), EMS, UMB, Tandy sound, CRT position
+and sync widths, the MPU-401, both joysticks (analog,
 digital or disabled), the joystick swap and CPU-speed sync, and the MT32-pi
 mode. Taking a device off the bus matters more than it sounds: a game that
 probes `0C0h` and finds a Tandy, or `330h` and finds an MPU-401, may switch to
@@ -442,6 +460,19 @@ OSD selects IRQ5 or IRQ7. A launcher can make the same per-program choice with
 `XTEGACTL sbirq=5` or `XTEGACTL sbirq=7`; omitting that option follows the OSD.
 The card and C/MS remain mutually exclusive at `220h` when both are built.
 
+DOS games normally discover that fixed setup through the environment:
+
+```bat
+SET BLASTER=A220 I5 D1 T4
+SET SOUND=C:\SB
+SET MIDI=SYNTH:1 MAP:E MODE:0
+```
+
+The `I` value must follow the effective OSD/XTEGACTL IRQ. `SOUND` and `MIDI`
+are optional conventions used by Creative software; adjust the `SOUND` path to
+the directory where those utilities or drivers are actually installed. See
+the complete [`AUTOEXEC.BAT` example](hdd/AUTOEXEC.BAT).
+
 ## Tandy 1000 sound
 
 An SN76489 at `0C0h`-`0CFh`, brought over from the parent PCXT core. It is the
@@ -456,10 +487,9 @@ Include or omit it at build time from `config.tcl`:
 set_global_assignment -name VERILOG_MACRO "ENABLE_TANDY_AUDIO=1"
 ```
 
-Its level follows the **Speaker Volume** setting rather than having a control of
-its own. The parent core has a separate "Tandy Volume" option, but the 64-bit
-OSD status word in this fork is fully allocated with no bit left to spend on
-one; both are internal beeper-class sources, so they share a control.
+Its level follows the **Speaker Volume** setting rather than having a separate
+volume control. **Audio & Video → Tandy Sound** is disabled by default and can be
+overridden per program with `XTEGACTL tandy` or `XTEGACTL notandy`.
 
 ## RTC/CMOS port
 
@@ -560,12 +590,11 @@ only pre-formatted images, as it will not be possible to format them from MS-DOS
 
 * `rtl/video/` — the EGA core, the VGA 13h+ blocks and their testbenches
 * `rtl/KFPC-XT/` — chipset, peripherals, RAM and the SDRAM controller
-* `SW/vga/` — `vgatsr.asm`/`vgatsr.com`, the VGA 13h+ TSR
+* `SW/vga/` — `vgatsr.asm`, source for the VGA 13h+ TSR packaged as `hdd/VGATSR.COM`
 * `SW/XTEGACTL/` — the per-program hardware control tool
 * `SW/ROMs/` — scripts for preparing system ROMs
 * `SW/8088_bios/` — Micro8088 BIOS sources and binaries
-* `docs/` — open issues, the XTEGACTL reference, and the root-cause analysis of
-  the Max CPU speed setting
+* `docs/` — DOS configuration, implementation notes and the XTEGACTL reference
 * `docs/report/` — source for the [technical report](https://aitorgomez.net/pcxt-ega/core-report)
 
 ## Developers
