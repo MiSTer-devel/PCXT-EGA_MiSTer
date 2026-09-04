@@ -1659,9 +1659,10 @@
             <h3>Familiar VGA profiles for DOS software</h3>
             <p>
               The extension implements packed <code>320x200x256</code> mode 13h,
-              selected unchained 320x200, 360x200 and 320x240 profiles, and a
-              bounded planar <code>320x200x16</code> mode 0Dh profile. It adds
-              the VGA DAC while leaving normal EGA modes on the EGA path.
+              plus partial, deliberately bounded Mode X support: unchained
+              256-colour profiles at 320x200, 360x200 and 320x240, and a fixed
+              planar <code>320x200x16</code> mode 0Dh profile. It adds the VGA
+              DAC while leaving normal EGA modes on the EGA path.
             </p>
             <div class="chips">
               <span class="chip">8 bpp packed</span>
@@ -1735,7 +1736,11 @@
                 </tr>
                 <tr>
                   <td>Framebuffer</td>
-                  <td><code>A000:0000</code>, one byte per pixel and 64,000 visible bytes.</td>
+                  <td>
+                    Packed mode 13h uses <code>A000:0000</code>, one byte per
+                    pixel and 64,000 visible bytes. The supported Mode X
+                    profiles use the four EGA planes with four pixels per byte.
+                  </td>
                 </tr>
                 <tr>
                   <td>Palette</td>
@@ -1815,10 +1820,11 @@
           <div>
             <strong>This is not a complete VGA</strong>
             <p>
-              It does not claim VBE/SVGA, arbitrary additional Mode X profiles,
-              VGA planar modes beyond the supported mode 0Dh, an independent VGA
-              text pipeline, programmable timings or full compatibility with VGA
-              registers outside the supported profiles.
+              It does not claim VBE/SVGA, arbitrary Mode X profiles beyond the
+              supported subset, planar 16-colour VGA modes beyond the supported
+              mode 0Dh, an independent VGA text pipeline, programmable timings
+              or full compatibility with VGA registers outside the supported
+              profiles.
             </p>
           </div>
         </div>
@@ -2287,7 +2293,7 @@ vsync_adjust=2</code></pre>
               <li>Active HGC or Tandy video hardware in this variant.</li>
               <li>Dynamic switching between video cards.</li>
               <li>General VGA or SVGA compatibility.</li>
-              <li>VBE/SVGA, arbitrary additional Mode X profiles and undocumented VGA extensions.</li>
+              <li>VBE/SVGA, arbitrary Mode X profiles beyond the supported subset and undocumented VGA extensions.</li>
               <li>Guaranteed compatibility with every BIOS or game.</li>
             </ul>
           </div>
